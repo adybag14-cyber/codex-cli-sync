@@ -1,0 +1,72 @@
+name: Sync Codex Windows Alpha
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-codex-windows-alpha
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync Latest Codex Windows Alpha Bundle
+        id: sync
+        shell: pwsh
+        run: .\scripts\sync-codex-windows-alpha.ps1
+
+      - name: Upload Bundle Artifact
+        if: steps.sync.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-windows-x64-${{ steps.sync.outputs.upstream_tag }}
+          path: |
+            ${{ steps.sync.outputs.bundle_path }}
+            ${{ steps.sync.outputs.manifest_path }}
+          if-no-files-found: error
+
+      - name: Publish Rolling Release
+        if: steps.sync.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-windows-x64-alpha
+          name: Latest Codex Windows x64 Alpha Bundle
+          prerelease: true
+          overwrite_files: true
+          files: |
+            ${{ steps.sync.outputs.bundle_path }}
+            ${{ steps.sync.outputs.manifest_path }}
+          body: |
+            Rolling Windows x64 Codex alpha bundle.
+
+            Upstream tag: `${{ steps.sync.outputs.upstream_tag }}`
+            Upstream release: ${{ steps.sync.outputs.upstream_url }}
+            Generated at: `${{ steps.sync.outputs.generated_at }}`
+
+      - name: Commit State Files
+        if: steps.sync.outputs.changed == 'true'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/latest-alpha-tag.txt state/latest-alpha.json
+          if (git diff --cached --quiet) {
+            Write-Host "No state changes to commit."
+            exit 0
+          }
+          git commit -m "Sync $env:UPSTREAM_TAG"
+          git push
+        env:
+          UPSTREAM_TAG: ${{ steps.sync.outputs.upstream_tag }}
