@@ -11,6 +11,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$StateDir = [System.IO.Path]::GetFullPath($StateDir)
+$WorkspaceDir = [System.IO.Path]::GetFullPath($WorkspaceDir)
+
 function Write-ActionOutput {
     param(
         [Parameter(Mandatory = $true)]
@@ -130,11 +133,11 @@ if ($selectedAssets.Count -eq 0) {
 }
 
 $bundleBaseName = "codex-windows-$WindowsArch-latest-alpha"
-$bundlePath = Join-Path $WorkspaceDir "$bundleBaseName.zip"
-$releaseWorkspace = Join-Path $WorkspaceDir $releaseTag
-$payloadRoot = Join-Path $releaseWorkspace "codex-windows-$WindowsArch-$releaseTag"
-$assetsDir = Join-Path $payloadRoot "assets"
-$bundleManifestPath = Join-Path $payloadRoot "manifest.json"
+$bundlePath = [System.IO.Path]::GetFullPath((Join-Path $WorkspaceDir "$bundleBaseName.zip"))
+$releaseWorkspace = [System.IO.Path]::GetFullPath((Join-Path $WorkspaceDir $releaseTag))
+$payloadRoot = [System.IO.Path]::GetFullPath((Join-Path $releaseWorkspace "codex-windows-$WindowsArch-$releaseTag"))
+$assetsDir = [System.IO.Path]::GetFullPath((Join-Path $payloadRoot "assets"))
+$bundleManifestPath = [System.IO.Path]::GetFullPath((Join-Path $payloadRoot "manifest.json"))
 
 if (Test-Path $releaseWorkspace) {
     Remove-Item -Recurse -Force $releaseWorkspace
