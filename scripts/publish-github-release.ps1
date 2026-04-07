@@ -172,7 +172,7 @@ function Upload-ReleaseAsset {
 
     $uploadBase = [string]$Release.upload_url -replace "\{\?name,label\}$", ""
     $encodedName = [System.Uri]::EscapeDataString($assetName)
-    $uploadUri = "$uploadBase?name=$encodedName"
+    $uploadUri = "${uploadBase}?name=$encodedName"
     $headers = Get-GitHubHeaders
     $contentType = Get-UploadContentType -Path $Path
 
