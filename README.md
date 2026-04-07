@@ -24,3 +24,5 @@ The workflow also runs on pushes that touch the workflow, script, or README so r
 Manual `workflow_dispatch` runs expose a `force` toggle that republishes the current upstream tag, which is useful for repairing or backfilling the versioned release history without waiting for a newer upstream alpha.
 
 The workflow opts GitHub JavaScript actions into Node 24 with `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` and uses current official action majors for checkout and artifact upload.
+
+Release publishing no longer depends on `softprops/action-gh-release`; it is handled by [`scripts/publish-github-release.ps1`](scripts/publish-github-release.ps1) via the GitHub Releases API and the repo-scoped `GITHUB_TOKEN`.

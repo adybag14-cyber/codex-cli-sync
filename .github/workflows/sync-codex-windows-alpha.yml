@@ -13,6 +13,7 @@ on:
       - main
     paths:
       - .github/workflows/sync-codex-windows-alpha.yml
+      - scripts/publish-github-release.ps1
       - scripts/sync-codex-windows-alpha.ps1
       - README.md
   schedule:
@@ -62,39 +63,57 @@ jobs:
 
       - name: Publish Versioned Release
         if: steps.sync.outputs.changed == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.sync.outputs.upstream_tag }}
-          name: Codex Windows x64 Alpha ${{ steps.sync.outputs.upstream_tag }}
-          prerelease: true
-          overwrite_files: true
-          files: |
-            ${{ steps.sync.outputs.bundle_path }}
-            ${{ steps.sync.outputs.manifest_path }}
-          body: |
-            Windows x64 Codex alpha bundle synced from upstream.
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REPO: ${{ github.repository }}
+          TARGET_COMMITISH: ${{ github.ref_name }}
+        run: |
+          $body = @"
+          Windows x64 Codex alpha bundle synced from upstream.
 
-            Upstream tag: `${{ steps.sync.outputs.upstream_tag }}`
-            Upstream release: ${{ steps.sync.outputs.upstream_url }}
-            Generated at: `${{ steps.sync.outputs.generated_at }}`
+          Upstream tag: `${{ steps.sync.outputs.upstream_tag }}`
+          Upstream release: ${{ steps.sync.outputs.upstream_url }}
+          Generated at: `${{ steps.sync.outputs.generated_at }}`
+          "@
+          .\scripts\publish-github-release.ps1 `
+            -Repo $env:RELEASE_REPO `
+            -TagName "${{ steps.sync.outputs.upstream_tag }}" `
+            -ReleaseName "Codex Windows x64 Alpha ${{ steps.sync.outputs.upstream_tag }}" `
+            -Body $body `
+            -Files @(
+              "${{ steps.sync.outputs.bundle_path }}",
+              "${{ steps.sync.outputs.manifest_path }}"
+            ) `
+            -TargetCommitish $env:TARGET_COMMITISH `
+            -Prerelease
 
       - name: Publish Rolling Release
         if: steps.sync.outputs.changed == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest-windows-x64-alpha
-          name: Latest Codex Windows x64 Alpha Bundle
-          prerelease: true
-          overwrite_files: true
-          files: |
-            ${{ steps.sync.outputs.bundle_path }}
-            ${{ steps.sync.outputs.manifest_path }}
-          body: |
-            Rolling Windows x64 Codex alpha bundle.
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REPO: ${{ github.repository }}
+          TARGET_COMMITISH: ${{ github.ref_name }}
+        run: |
+          $body = @"
+          Rolling Windows x64 Codex alpha bundle.
 
-            Latest upstream tag: `${{ steps.sync.outputs.upstream_tag }}`
-            Upstream release: ${{ steps.sync.outputs.upstream_url }}
-            Generated at: `${{ steps.sync.outputs.generated_at }}`
+          Latest upstream tag: `${{ steps.sync.outputs.upstream_tag }}`
+          Upstream release: ${{ steps.sync.outputs.upstream_url }}
+          Generated at: `${{ steps.sync.outputs.generated_at }}`
+          "@
+          .\scripts\publish-github-release.ps1 `
+            -Repo $env:RELEASE_REPO `
+            -TagName "latest-windows-x64-alpha" `
+            -ReleaseName "Latest Codex Windows x64 Alpha Bundle" `
+            -Body $body `
+            -Files @(
+              "${{ steps.sync.outputs.bundle_path }}",
+              "${{ steps.sync.outputs.manifest_path }}"
+            ) `
+            -TargetCommitish $env:TARGET_COMMITISH `
+            -Prerelease
 
       - name: Commit State Files
         if: steps.sync.outputs.changed == 'true'
