@@ -22,3 +22,5 @@ Release layout:
 The workflow also runs on pushes that touch the workflow, script, or README so release-pipeline changes get an immediate validation run without triggering on the state-file commits produced by the sync job.
 
 Manual `workflow_dispatch` runs expose a `force` toggle that republishes the current upstream tag, which is useful for repairing or backfilling the versioned release history without waiting for a newer upstream alpha.
+
+The workflow opts GitHub JavaScript actions into Node 24 with `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` and uses current official action majors for checkout and artifact upload.
