@@ -2,6 +2,19 @@ name: Sync Codex Windows Alpha
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: Force a republish even if the stored state already matches the latest upstream tag
+        required: false
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/sync-codex-windows-alpha.yml
+      - scripts/sync-codex-windows-alpha.ps1
+      - README.md
   schedule:
     - cron: "17 * * * *"
 
@@ -25,7 +38,14 @@ jobs:
       - name: Sync Latest Codex Windows Alpha Bundle
         id: sync
         shell: pwsh
-        run: .\scripts\sync-codex-windows-alpha.ps1
+        env:
+          FORCE_SYNC: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force == 'true' }}
+        run: |
+          if ($env:FORCE_SYNC -eq "true") {
+            .\scripts\sync-codex-windows-alpha.ps1 -Force
+          } else {
+            .\scripts\sync-codex-windows-alpha.ps1
+          }
 
       - name: Upload Bundle Artifact
         if: steps.sync.outputs.changed == 'true'
@@ -36,6 +56,24 @@ jobs:
             ${{ steps.sync.outputs.bundle_path }}
             ${{ steps.sync.outputs.manifest_path }}
           if-no-files-found: error
+
+      - name: Publish Versioned Release
+        if: steps.sync.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.sync.outputs.upstream_tag }}
+          name: Codex Windows x64 Alpha ${{ steps.sync.outputs.upstream_tag }}
+          prerelease: true
+          overwrite_files: true
+          files: |
+            ${{ steps.sync.outputs.bundle_path }}
+            ${{ steps.sync.outputs.manifest_path }}
+          body: |
+            Windows x64 Codex alpha bundle synced from upstream.
+
+            Upstream tag: `${{ steps.sync.outputs.upstream_tag }}`
+            Upstream release: ${{ steps.sync.outputs.upstream_url }}
+            Generated at: `${{ steps.sync.outputs.generated_at }}`
 
       - name: Publish Rolling Release
         if: steps.sync.outputs.changed == 'true'
@@ -51,7 +89,7 @@ jobs:
           body: |
             Rolling Windows x64 Codex alpha bundle.
 
-            Upstream tag: `${{ steps.sync.outputs.upstream_tag }}`
+            Latest upstream tag: `${{ steps.sync.outputs.upstream_tag }}`
             Upstream release: ${{ steps.sync.outputs.upstream_url }}
             Generated at: `${{ steps.sync.outputs.generated_at }}`
 
