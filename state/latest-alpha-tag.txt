@@ -1,2 +1,2 @@
-rust-v0.123.0-alpha.9
+rust-v0.123.0-alpha.10
 
