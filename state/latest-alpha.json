@@ -1,144 +1,144 @@
 {
   "upstream_repo": "openai/codex",
-  "upstream_tag": "rust-v0.124.0-alpha.3",
-  "upstream_release": "https://github.com/openai/codex/releases/tag/rust-v0.124.0-alpha.3",
-  "upstream_published": "04/23/2026 16:20:15",
+  "upstream_tag": "rust-v0.125.0-alpha.1",
+  "upstream_release": "https://github.com/openai/codex/releases/tag/rust-v0.125.0-alpha.1",
+  "upstream_published": "04/24/2026 06:35:27",
   "windows_arch": "x64",
-  "generated_at_utc": "2026-04-23T17:44:08.9985949Z",
+  "generated_at_utc": "2026-04-24T09:09:08.6389146Z",
   "asset_count": 19,
   "assets": [
     {
       "name": "argument-comment-lint-x86_64-pc-windows-msvc.zip",
-      "size": 3257032,
-      "digest": "sha256:596e1a053585456a507f2620741e68f01aa050c2fe0ce68ae180e04b8bb9e39e",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/argument-comment-lint-x86_64-pc-windows-msvc.zip",
-      "updated_at": "04/23/2026 16:20:30"
+      "size": 3257033,
+      "digest": "sha256:e639fdb0953c62fbd9b18be197c437150a275876f552620ced7017e9037b386b",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/argument-comment-lint-x86_64-pc-windows-msvc.zip",
+      "updated_at": "04/24/2026 06:35:45"
     },
     {
       "name": "codex-command-runner-x86_64-pc-windows-msvc.exe",
       "size": 808752,
-      "digest": "sha256:6ba855f56d429c1c7562c35ff9d000b3b619539a77328ab1c10c35329c1d9126",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-command-runner-x86_64-pc-windows-msvc.exe",
-      "updated_at": "04/23/2026 16:20:29"
+      "digest": "sha256:39c43cc209f8373dd0a28dd033b50ad4d7876b2e26c7ccd31fe3cdb62951f656",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-command-runner-x86_64-pc-windows-msvc.exe",
+      "updated_at": "04/24/2026 06:35:44"
     },
     {
       "name": "codex-command-runner-x86_64-pc-windows-msvc.exe.tar.gz",
-      "size": 359977,
-      "digest": "sha256:2c54c849a7549fe1655d8f3fd2d5a001b63df056bfce140de729ab16ba851940",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-command-runner-x86_64-pc-windows-msvc.exe.tar.gz",
-      "updated_at": "04/23/2026 16:20:28"
+      "size": 359943,
+      "digest": "sha256:39a00d4d59d9b3f954c7accbad67dc1e32e0caf20dc63f0486c2a9b17576fa34",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-command-runner-x86_64-pc-windows-msvc.exe.tar.gz",
+      "updated_at": "04/24/2026 06:35:44"
     },
     {
       "name": "codex-command-runner-x86_64-pc-windows-msvc.exe.zip",
-      "size": 347492,
-      "digest": "sha256:5b5f753cccfd0a76a400c0346041e1bcb6e7890dffe29cf76420aba78560586a",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-command-runner-x86_64-pc-windows-msvc.exe.zip",
-      "updated_at": "04/23/2026 16:20:28"
+      "size": 347443,
+      "digest": "sha256:e2423963881dd11e945459b06aef18635568d850e00e363c70a08c72e4ecb8ab",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-command-runner-x86_64-pc-windows-msvc.exe.zip",
+      "updated_at": "04/24/2026 06:35:44"
     },
     {
       "name": "codex-command-runner-x86_64-pc-windows-msvc.exe.zst",
-      "size": 305164,
-      "digest": "sha256:33a52a07966854042f359972ecb28383ffed2b27d79f5e08a9d9b0f9c08bb1b1",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-command-runner-x86_64-pc-windows-msvc.exe.zst",
-      "updated_at": "04/23/2026 16:20:28"
+      "size": 305191,
+      "digest": "sha256:0644db536b9d33fa48cbc22efee0459372909cbbeaef8713822d05ca223a11f4",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-command-runner-x86_64-pc-windows-msvc.exe.zst",
+      "updated_at": "04/24/2026 06:35:44"
     },
     {
-      "name": "codex-npm-win32-x64-0.124.0-alpha.3.tgz",
-      "size": 83391467,
-      "digest": "sha256:c185083375ebe3f6e794124ff9bf98a0eafa9ab4055960356d60d400c85ca33a",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-npm-win32-x64-0.124.0-alpha.3.tgz",
-      "updated_at": "04/23/2026 16:20:42"
+      "name": "codex-npm-win32-x64-0.125.0-alpha.1.tgz",
+      "size": 84294936,
+      "digest": "sha256:d7db8437791242c28a1131f3beb5d24805adf289d9b45366045aa530651c0d0f",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-npm-win32-x64-0.125.0-alpha.1.tgz",
+      "updated_at": "04/24/2026 06:35:59"
     },
     {
       "name": "codex-responses-api-proxy-x86_64-pc-windows-msvc.exe",
       "size": 5510448,
-      "digest": "sha256:d0f143899ccffef0e71068764dd95fa9b357634477b20b0aebcd725208b1a439",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-responses-api-proxy-x86_64-pc-windows-msvc.exe",
-      "updated_at": "04/23/2026 16:20:30"
+      "digest": "sha256:3763286769d89c121d0ef142e172fa71bcd06541d426b3fe20bdd28d8635e7e7",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-responses-api-proxy-x86_64-pc-windows-msvc.exe",
+      "updated_at": "04/24/2026 06:35:45"
     },
     {
       "name": "codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.tar.gz",
-      "size": 2321553,
-      "digest": "sha256:7d5dedb5069daadd9640a781532d92cb485fbf0b20cdd0f9a2032bad6293d488",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.tar.gz",
-      "updated_at": "04/23/2026 16:20:29"
+      "size": 2321569,
+      "digest": "sha256:0d7072b02a195f2f1cb50e1705fa8ec21ddf90ee6fa908b6450e5a579f228eac",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.tar.gz",
+      "updated_at": "04/24/2026 06:35:45"
     },
     {
       "name": "codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.zip",
-      "size": 2257516,
-      "digest": "sha256:86e936e601c3f91ac8be381bd9c359498948e19f0126c1f96afba4bde230347d",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.zip",
-      "updated_at": "04/23/2026 16:20:29"
+      "size": 2257589,
+      "digest": "sha256:3a4b97f51ecbc7a06c2cbe445676902e59537c972cb7ec04cf7a95243e38191b",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.zip",
+      "updated_at": "04/24/2026 06:35:45"
     },
     {
       "name": "codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.zst",
-      "size": 1915815,
-      "digest": "sha256:46ad5c8806c84065ade290fb940ba45c8d0fb7fa8c64b53efe185b320ca23518",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.zst",
-      "updated_at": "04/23/2026 16:20:29"
+      "size": 1915885,
+      "digest": "sha256:2107980492cb134d64e2958d1e120a3ef65713d290e6d350f3b955125499e372",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.zst",
+      "updated_at": "04/24/2026 06:35:44"
     },
     {
       "name": "codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe",
       "size": 738096,
-      "digest": "sha256:b715a53daaed4f30b2c73ec98a1cd8547a6e1fad1ca51f3867586d6cc84b9196",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe",
-      "updated_at": "04/23/2026 16:20:29"
+      "digest": "sha256:b4789bdf9dfac51b35bd74ffc7b99f05083abd39299701458d7392a40df157bd",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe",
+      "updated_at": "04/24/2026 06:35:44"
     },
     {
       "name": "codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.tar.gz",
-      "size": 331655,
-      "digest": "sha256:62a1b61834bb6bb135d46d854fdb7179f279578a24729bce9ea21705135de72f",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.tar.gz",
-      "updated_at": "04/23/2026 16:20:28"
+      "size": 331678,
+      "digest": "sha256:42db74e805a77564a99a92c48d3281e3c0356f2a51f4a1743df7917dc7be91ba",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.tar.gz",
+      "updated_at": "04/24/2026 06:35:44"
     },
     {
       "name": "codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.zip",
-      "size": 321847,
-      "digest": "sha256:d310f07dd5d986e4d04934323f5aa755d98b431a26b8dd7f001d213986252d4c",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.zip",
-      "updated_at": "04/23/2026 16:20:28"
+      "size": 321818,
+      "digest": "sha256:a4c6b4356d777e4e69dd80c9392ae14469fa573bad6bb30e5bd8dbd09063fddf",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.zip",
+      "updated_at": "04/24/2026 06:35:44"
     },
     {
       "name": "codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.zst",
-      "size": 284960,
-      "digest": "sha256:5c781291832bcd0cdf4e411101437507d2b082ec608669e00573ec57b534ec0e",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.zst",
-      "updated_at": "04/23/2026 16:20:28"
+      "size": 285045,
+      "digest": "sha256:76819d1d5de292f6ed51d53634643809cd15c8f910de47e1b3e3908c6c82f625",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.zst",
+      "updated_at": "04/24/2026 06:35:44"
     },
     {
       "name": "codex-x86_64-pc-windows-msvc.exe",
-      "size": 227680048,
-      "digest": "sha256:d313b98bc443b537dc9f4ca73dd0faec6690e6d719321395a05b4f37c8363244",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-x86_64-pc-windows-msvc.exe",
-      "updated_at": "04/23/2026 16:20:48"
+      "size": 230287664,
+      "digest": "sha256:e7181b9d7f3ba0e58b14e5ffb8b2709fafed3543a8dfaf1cf34f9870be14403e",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-x86_64-pc-windows-msvc.exe",
+      "updated_at": "04/24/2026 06:36:05"
     },
     {
       "name": "codex-x86_64-pc-windows-msvc.exe.tar.gz",
-      "size": 78689565,
-      "digest": "sha256:036f2db68cf2ea21b137e16b60d0de456ffea20429715da9f47488d5378f064b",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-x86_64-pc-windows-msvc.exe.tar.gz",
-      "updated_at": "04/23/2026 16:20:43"
+      "size": 79566255,
+      "digest": "sha256:850de672c0927da02f38977814625f95c8283969e99f5075dcae85b5f641b1a2",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-x86_64-pc-windows-msvc.exe.tar.gz",
+      "updated_at": "04/24/2026 06:35:59"
     },
     {
       "name": "codex-x86_64-pc-windows-msvc.exe.zip",
-      "size": 76859956,
-      "digest": "sha256:a1c6bc6f44b011d6a11c1f85fa62011cce237c043f413935a01f1b9f8defd429",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-x86_64-pc-windows-msvc.exe.zip",
-      "updated_at": "04/23/2026 16:20:42"
+      "size": 77705821,
+      "digest": "sha256:f41914e58df3630ffebe5ce71d0e25454adc9b747a8d46fb9303008f5cb70470",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-x86_64-pc-windows-msvc.exe.zip",
+      "updated_at": "04/24/2026 06:35:59"
     },
     {
       "name": "codex-x86_64-pc-windows-msvc.exe.zst",
-      "size": 58251630,
-      "digest": "sha256:2ee499fbdf08beee90838527366abb1a1b0de62fa14541e2e850cebdc9c46ff2",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/codex-x86_64-pc-windows-msvc.exe.zst",
-      "updated_at": "04/23/2026 16:20:40"
+      "size": 58944444,
+      "digest": "sha256:1771c1382b71f9afb319e9684dde5e73235a9b269b8271ad8d8bc35bd43047a0",
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/codex-x86_64-pc-windows-msvc.exe.zst",
+      "updated_at": "04/24/2026 06:35:56"
     },
     {
       "name": "install.ps1",
       "size": 24040,
       "digest": "sha256:98cf5674e2dffe39a041fe704061d9a6f637763628bb22600911adef2329e148",
-      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.124.0-alpha.3/install.ps1",
-      "updated_at": "04/23/2026 16:20:28"
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.125.0-alpha.1/install.ps1",
+      "updated_at": "04/24/2026 06:35:44"
     }
   ]
 }
