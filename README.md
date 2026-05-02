@@ -1,28 +1,36 @@
 # Codex CLI Sync
 
-This repository tracks the latest OpenAI Codex Rust alpha for Windows x64.
+This repository builds a Windows x64 custom Codex CLI from upstream OpenAI Codex source.
 
 The scheduled workflow:
 
-- checks `openai/codex` every hour for the newest `rust-v*-alpha.*` release
-- downloads all Windows x64 release assets plus `install.ps1`
-- repackages them into one rolling bundle zip
-- publishes a versioned GitHub prerelease for each newly detected upstream tag
-- uploads the bundle as a workflow artifact
-- refreshes a rolling GitHub Release named `latest-windows-x64-alpha`
-- commits a small state file so unchanged hourly runs can skip work
+- checks `openai/codex` every four hours for changes on `main`
+- skips unchanged upstream SHAs using `state/latest-custom-main-sha.txt`
+- clones the upstream source at the exact detected SHA
+- rewrites the workspace version to a custom CI version
+- applies the repo-owned Windows custom patch
+- compiles `codex.exe`, `codex-command-runner.exe`, and `codex-windows-sandbox-setup.exe`
+- packages those binaries with `rg.exe` and `VERSION.txt`
+- publishes a per-SHA prerelease and refreshes `latest-windows-x64-custom`
+- commits the latest synced upstream SHA and manifest after a successful build
 
-The latest synced upstream tag is stored in `state/latest-alpha-tag.txt`.
+The Windows custom patch is maintained in [`scripts/patch-codex-windows-custom.ps1`](scripts/patch-codex-windows-custom.ps1). It fails the build if an upstream source anchor moves instead of publishing an unpatched binary.
+
+Patch contract:
+
+- force Windows approval policy to `AskForApproval::Never`
+- force Windows runtime permissions to `PermissionProfile::Disabled`
+- clear Windows sandbox mode and network proxy sandbox state
+- force Windows sandbox level resolution to `WindowsSandboxLevel::Disabled`
+- turn Windows sandbox setup into a no-op
+- skip exec policy approval requirements with `bypass_sandbox=true`
+- ignore tool-level sandbox escalation metadata on Windows
 
 Release layout:
 
-- `latest-windows-x64-alpha` stays as the rolling "always latest" prerelease
-- `rust-v...-alpha...` releases preserve per-version history on the Releases page
+- `latest-windows-x64-custom` stays as the rolling "always latest custom build" prerelease
+- `custom-windows-x64-<upstream-sha>` releases preserve per-upstream-SHA build history
 
-The workflow also runs on pushes that touch the workflow, script, or README so release-pipeline changes get an immediate validation run without triggering on the state-file commits produced by the sync job.
+Manual `workflow_dispatch` runs expose a `force` toggle and an `upstream_ref` input. The default upstream ref is `main`; OpenAI Codex does not currently publish a `master` branch.
 
-Manual `workflow_dispatch` runs expose a `force` toggle that republishes the current upstream tag, which is useful for repairing or backfilling the versioned release history without waiting for a newer upstream alpha.
-
-The workflow opts GitHub JavaScript actions into Node 24 with `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` and uses current official action majors for checkout and artifact upload.
-
-Release publishing no longer depends on `softprops/action-gh-release`; it is handled by [`scripts/publish-github-release.ps1`](scripts/publish-github-release.ps1) via the GitHub Releases API and the repo-scoped `GITHUB_TOKEN`.
+Release publishing is handled by [`scripts/publish-github-release.ps1`](scripts/publish-github-release.ps1) through the GitHub Releases API and the repo-scoped `GITHUB_TOKEN`.

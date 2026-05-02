@@ -1,0 +1,173 @@
+name: Sync Codex Windows Custom
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Force a rebuild and republish even if the stored upstream SHA already matches
+        required: false
+        type: boolean
+        default: false
+      upstream_ref:
+        description: Upstream OpenAI Codex ref to sync
+        required: false
+        type: string
+        default: main
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/sync-codex-windows-custom.yml
+      - scripts/patch-codex-windows-custom.ps1
+      - scripts/publish-github-release.ps1
+      - scripts/sync-codex-windows-custom.ps1
+      - README.md
+  schedule:
+    - cron: "17 */4 * * *"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_PROFILE_RELEASE_LTO: thin
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: sync-codex-windows-custom
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: windows-latest
+    timeout-minutes: 150
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Prepare Rust Toolchain
+        shell: pwsh
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          rustc --version
+          cargo --version
+
+      - name: Cache Cargo State
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            out/codex-upstream/codex-rs/target
+          key: windows-codex-custom-cargo-${{ github.run_id }}
+          restore-keys: |
+            windows-codex-custom-cargo-
+
+      - name: Sync Patch Build And Package
+        id: sync
+        shell: pwsh
+        env:
+          FORCE_SYNC: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force == 'true' }}
+          UPSTREAM_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.upstream_ref || 'main' }}
+        run: |
+          $args = @("-UpstreamRef", $env:UPSTREAM_REF)
+          if ($env:FORCE_SYNC -eq "true") {
+            $args += "-Force"
+          }
+          .\scripts\sync-codex-windows-custom.ps1 @args
+
+      - name: Upload Build Artifact
+        if: steps.sync.outputs.changed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-windows-x64-custom-${{ steps.sync.outputs.upstream_short_sha }}
+          path: |
+            ${{ steps.sync.outputs.bundle_path }}
+            ${{ steps.sync.outputs.manifest_path }}
+            ${{ steps.sync.outputs.install_script_path }}
+          if-no-files-found: error
+
+      - name: Publish Versioned Release
+        if: steps.sync.outputs.changed == 'true'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REPO: ${{ github.repository }}
+          TARGET_COMMITISH: ${{ github.ref_name }}
+        run: |
+          $body = @"
+          Windows x64 Codex custom build compiled from upstream OpenAI Codex.
+
+          Upstream repo: `${{ steps.sync.outputs.upstream_repo }}`
+          Upstream ref: `${{ steps.sync.outputs.upstream_ref }}`
+          Upstream SHA: `${{ steps.sync.outputs.upstream_sha }}`
+          Custom version: `${{ steps.sync.outputs.custom_version }}`
+          Generated at: `${{ steps.sync.outputs.generated_at }}`
+
+          Windows custom patch:
+          - forces approval policy to Never
+          - forces runtime permission profile to Disabled
+          - disables Windows sandbox mode resolution and setup
+          - bypasses exec policy/tool escalation prompts on Windows
+          "@
+          .\scripts\publish-github-release.ps1 `
+            -Repo $env:RELEASE_REPO `
+            -TagName "${{ steps.sync.outputs.release_tag }}" `
+            -ReleaseName "Codex Windows x64 Custom ${{ steps.sync.outputs.upstream_short_sha }}" `
+            -Body $body `
+            -Files @(
+              "${{ steps.sync.outputs.bundle_path }}",
+              "${{ steps.sync.outputs.manifest_path }}",
+              "${{ steps.sync.outputs.install_script_path }}"
+            ) `
+            -TargetCommitish $env:TARGET_COMMITISH `
+            -Prerelease
+
+      - name: Publish Rolling Release
+        if: steps.sync.outputs.changed == 'true'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REPO: ${{ github.repository }}
+          TARGET_COMMITISH: ${{ github.ref_name }}
+        run: |
+          $body = @"
+          Rolling Windows x64 Codex custom build.
+
+          Upstream repo: `${{ steps.sync.outputs.upstream_repo }}`
+          Upstream ref: `${{ steps.sync.outputs.upstream_ref }}`
+          Upstream SHA: `${{ steps.sync.outputs.upstream_sha }}`
+          Custom version: `${{ steps.sync.outputs.custom_version }}`
+          Generated at: `${{ steps.sync.outputs.generated_at }}`
+          "@
+          .\scripts\publish-github-release.ps1 `
+            -Repo $env:RELEASE_REPO `
+            -TagName "${{ steps.sync.outputs.rolling_tag }}" `
+            -ReleaseName "Latest Codex Windows x64 Custom Build" `
+            -Body $body `
+            -Files @(
+              "${{ steps.sync.outputs.bundle_path }}",
+              "${{ steps.sync.outputs.manifest_path }}",
+              "${{ steps.sync.outputs.install_script_path }}"
+            ) `
+            -TargetCommitish $env:TARGET_COMMITISH `
+            -Prerelease
+
+      - name: Commit State Files
+        if: steps.sync.outputs.changed == 'true'
+        shell: pwsh
+        env:
+          UPSTREAM_SHA: ${{ steps.sync.outputs.upstream_sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/latest-custom-main-sha.txt state/latest-custom-main.json
+          if (git diff --cached --quiet) {
+            Write-Host "No state changes to commit."
+            exit 0
+          }
+          git commit -m "Sync custom Codex $env:UPSTREAM_SHA"
+          git push
