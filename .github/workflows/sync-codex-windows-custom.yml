@@ -73,11 +73,13 @@ jobs:
           FORCE_SYNC: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force == 'true' }}
           UPSTREAM_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.upstream_ref || 'main' }}
         run: |
-          $args = @("-UpstreamRef", $env:UPSTREAM_REF)
-          if ($env:FORCE_SYNC -eq "true") {
-            $args += "-Force"
+          $scriptArgs = @{
+            UpstreamRef = $env:UPSTREAM_REF
           }
-          .\scripts\sync-codex-windows-custom.ps1 @args
+          if ($env:FORCE_SYNC -eq "true") {
+            $scriptArgs.Force = $true
+          }
+          .\scripts\sync-codex-windows-custom.ps1 @scriptArgs
 
       - name: Upload Build Artifact
         if: steps.sync.outputs.changed == 'true'
