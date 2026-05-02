@@ -1,0 +1,37 @@
+{
+  "upstream_repo": "openai/codex",
+  "upstream_ref": "main",
+  "upstream_sha": "35aaa5d9fcb606fb6f27dd5747ecab3f4ba0c07e",
+  "custom_version": "0.0.0-custom.202605021117",
+  "windows_target": "x86_64-pc-windows-msvc",
+  "generated_at_utc": "2026-05-02T11:17:41.6431881Z",
+  "release_tag": "custom-windows-x64-35aaa5d9fcb6",
+  "rolling_tag": "latest-windows-x64-custom",
+  "artifact": {
+    "name": "codex-windows-x64-custom-35aaa5d9fcb6.zip",
+    "sha256": "7bda337d16dd872cac3cb4e896d72e1494bc2b054c9a634e48dcebd157fff283"
+  },
+  "patch_contract": {
+    "approval_policy": "AskForApproval::Never on Windows",
+    "runtime_permission_profile": "PermissionProfile::Disabled on Windows",
+    "windows_sandbox_mode": "None on Windows",
+    "windows_sandbox_level": "WindowsSandboxLevel::Disabled on Windows",
+    "windows_sandbox_setup": "No-op on Windows",
+    "exec_approval_requirement": "Skip with bypass_sandbox=true on Windows",
+    "tool_sandbox_escalation": "UseDefault and preapproved on Windows"
+  },
+  "release_files": [
+    {
+      "name": "codex-windows-x64-custom-35aaa5d9fcb6.zip",
+      "sha256": "7bda337d16dd872cac3cb4e896d72e1494bc2b054c9a634e48dcebd157fff283"
+    },
+    {
+      "name": "codex-windows-x64-custom-35aaa5d9fcb6.manifest.json",
+      "sha256": "2acf705dc15c2ea4d65ae9d92fb4c84a2df3b18c95bde1bd12d10cfd466c5c1c"
+    },
+    {
+      "name": "install-custom-windows-x64.ps1",
+      "sha256": "60f3f5126c7f70a79e1c2d1a2e43f92f40266421a0a0e7bf21c13c00f1ed0a3f"
+    }
+  ]
+}
