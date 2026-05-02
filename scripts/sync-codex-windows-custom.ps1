@@ -335,14 +335,11 @@ $manifest = [ordered]@{
     }
     release_files      = @(
         [ordered]@{ name = [System.IO.Path]::GetFileName($bundlePath); sha256 = $bundleSha256 },
-        [ordered]@{ name = [System.IO.Path]::GetFileName($manifestPath); sha256 = "" },
+        [ordered]@{ name = [System.IO.Path]::GetFileName($manifestPath); sha256 = $null },
         [ordered]@{ name = [System.IO.Path]::GetFileName($installScriptPath); sha256 = Get-FileSha256 -Path $installScriptPath }
     )
 }
 
-Save-JsonFile -Path $manifestPath -Value $manifest
-$manifestHash = Get-FileSha256 -Path $manifestPath
-$manifest.release_files[1].sha256 = $manifestHash
 Save-JsonFile -Path $manifestPath -Value $manifest
 Save-JsonFile -Path $latestStatePath -Value $manifest
 Set-Content -Path $latestShaPath -Value ($upstreamSha + "`n") -Encoding utf8

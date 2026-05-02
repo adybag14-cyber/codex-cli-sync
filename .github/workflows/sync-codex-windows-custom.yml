@@ -70,7 +70,7 @@ jobs:
         id: sync
         shell: pwsh
         env:
-          FORCE_SYNC: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force == 'true' }}
+          FORCE_SYNC: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force == 'true') }}
           UPSTREAM_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.upstream_ref || 'main' }}
         run: |
           $scriptArgs = @{
