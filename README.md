@@ -15,6 +15,7 @@ The scheduled workflow:
 - commits the latest synced upstream SHA and manifest after a successful build
 
 The Windows custom patch is maintained in [`scripts/patch-codex-windows-custom.ps1`](scripts/patch-codex-windows-custom.ps1). It fails the build if an upstream source anchor moves instead of publishing an unpatched binary.
+For Rust config construction, the patcher prefers named/shorthand struct-field rewriting over one large text anchor so normal upstream refactors can move or reformat surrounding code without losing the required Windows behavior.
 
 Patch contract:
 

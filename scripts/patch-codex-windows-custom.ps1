@@ -83,6 +83,126 @@ function Insert-AfterOnce {
     Write-Host "Inserted: $Description"
 }
 
+function Find-MatchingBrace {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [Parameter(Mandatory = $true)][int]$OpenBraceIndex
+    )
+
+    $depth = 0
+    for ($i = $OpenBraceIndex; $i -lt $Text.Length; $i++) {
+        $ch = $Text[$i]
+        if ($ch -eq "{") {
+            $depth++
+        } elseif ($ch -eq "}") {
+            $depth--
+            if ($depth -eq 0) {
+                return $i
+            }
+        }
+    }
+
+    throw "Could not find matching closing brace."
+}
+
+function Set-RustStructFieldInitializer {
+    param(
+        [Parameter(Mandatory = $true)][string]$Block,
+        [Parameter(Mandatory = $true)][string]$FieldName,
+        [Parameter(Mandatory = $true)][string]$Replacement
+    )
+
+    $escapedFieldName = [regex]::Escape($FieldName)
+    $fieldRegex = [regex]::new("(?m)^(\s*$escapedFieldName\s*:\s*)")
+    $matches = $fieldRegex.Matches($Block)
+    if ($matches.Count -eq 0) {
+        $shorthandRegex = [regex]::new("(?m)^(\s*)$escapedFieldName\s*,")
+        $shorthandMatches = $shorthandRegex.Matches($Block)
+        if ($shorthandMatches.Count -eq 1) {
+            $match = $shorthandMatches[0]
+            $prefix = $match.Groups[1].Value + $FieldName + ": "
+            return $Block.Substring(0, $match.Index) + $prefix + $Replacement + $Block.Substring($match.Index + $match.Length - 1)
+        }
+
+        throw "Expected exactly one '$FieldName' field in Rust struct block, found 0 named initializers and $($shorthandMatches.Count) shorthand initializers."
+    }
+
+    if ($matches.Count -ne 1) {
+        throw "Expected exactly one '$FieldName' field in Rust struct block, found $($matches.Count)."
+    }
+
+    $match = $matches[0]
+    $valueStart = $match.Index + $match.Length
+    $depth = 0
+    for ($i = $valueStart; $i -lt $Block.Length; $i++) {
+        $ch = $Block[$i]
+        if ($ch -eq "(" -or $ch -eq "{" -or $ch -eq "[") {
+            $depth++
+        } elseif ($ch -eq ")" -or $ch -eq "}" -or $ch -eq "]") {
+            $depth--
+        } elseif ($ch -eq "," -and $depth -eq 0) {
+            return $Block.Substring(0, $valueStart) + $Replacement + $Block.Substring($i)
+        }
+    }
+
+    throw "Could not find initializer terminator for Rust field '$FieldName'."
+}
+
+function Set-ConfigPermissionsForWindowsCustom {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $text = Get-Text -Path $Path
+    $permissionsMatch = [regex]::Match($text, 'permissions\s*:\s*Permissions\s*\{')
+    if (-not $permissionsMatch.Success) {
+        return $false
+    }
+
+    $openBrace = $text.IndexOf("{", $permissionsMatch.Index)
+    $closeBrace = Find-MatchingBrace -Text $text -OpenBraceIndex $openBrace
+    $blockStart = $openBrace + 1
+    $block = $text.Substring($blockStart, $closeBrace - $blockStart)
+
+    $block = Set-RustStructFieldInitializer -Block $block -FieldName "approval_policy" -Replacement @'
+if cfg!(target_os = "windows") {
+                    Constrained::allow_any(AskForApproval::Never)
+                } else {
+                    constrained_approval_policy.value
+                }
+'@
+
+    $block = Set-RustStructFieldInitializer -Block $block -FieldName "permission_profile_state" -Replacement @'
+if cfg!(target_os = "windows") {
+                    PermissionProfileState::from_constrained_legacy(
+                        Constrained::allow_any(PermissionProfile::Disabled),
+                    )
+                    .map_err(std::io::Error::from)?
+                } else {
+                    permission_profile_state
+                }
+'@
+
+    $block = Set-RustStructFieldInitializer -Block $block -FieldName "network" -Replacement @'
+if cfg!(target_os = "windows") {
+                    None
+                } else {
+                    network
+                }
+'@
+
+    $block = Set-RustStructFieldInitializer -Block $block -FieldName "windows_sandbox_mode" -Replacement @'
+if cfg!(target_os = "windows") {
+                    None
+                } else {
+                    windows_sandbox_mode
+                }
+'@
+
+    $newText = $text.Substring(0, $blockStart) + $block + $text.Substring($closeBrace)
+    Set-Text -Path $Path -Text $newText
+    Write-Host "Patched: force Windows permissions to no approval and no sandbox"
+    return $true
+}
+
 function Assert-Contains {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -131,11 +251,13 @@ $permissionsReplacement = @'
                 windows_sandbox_private_desktop,
 '@
 
-Replace-Once `
-    -Path $configPath `
-    -Pattern 'approval_policy:\s*constrained_approval_policy\.value,\s*permission_profile:\s*constrained_permission_profile\.value,\s*active_permission_profile,\s*network,\s*allow_login_shell,\s*shell_environment_policy,\s*windows_sandbox_mode,\s*windows_sandbox_private_desktop,' `
-    -Replacement $permissionsReplacement `
-    -Description "force Windows permissions to no approval and no sandbox"
+if (-not (Set-ConfigPermissionsForWindowsCustom -Path $configPath)) {
+    Replace-Once `
+        -Path $configPath `
+        -Pattern 'approval_policy:\s*constrained_approval_policy\.value,\s*permission_profile:\s*constrained_permission_profile\.value,\s*active_permission_profile,\s*network,\s*allow_login_shell,\s*shell_environment_policy,\s*windows_sandbox_mode,\s*windows_sandbox_private_desktop,' `
+        -Replacement $permissionsReplacement `
+        -Description "force Windows permissions to no approval and no sandbox"
+}
 
 Replace-Once `
     -Path $windowsSandboxPath `
