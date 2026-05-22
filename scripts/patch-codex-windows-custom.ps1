@@ -291,10 +291,10 @@ Insert-AfterOnce `
 
 Insert-AfterOnce `
     -Path $windowsSandboxPath `
-    -Pattern 'pub fn resolve_windows_sandbox_mode\(\s*cfg: &ConfigToml,\s*profile: &ConfigProfile,\s*\) -> Option<WindowsSandboxModeToml> \{\r?\n' `
+    -Pattern 'pub fn resolve_windows_sandbox_mode\(\s*cfg: &ConfigToml,?\s*(?:profile: &ConfigProfile,?\s*)?\) -> Option<WindowsSandboxModeToml> \{\r?\n' `
     -Insertion @'
     if cfg!(target_os = "windows") {
-        let _ = (cfg, profile);
+        let _ = cfg;
         return None;
     }
 
