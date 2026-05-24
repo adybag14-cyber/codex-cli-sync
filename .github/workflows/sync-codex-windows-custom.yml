@@ -127,11 +127,11 @@ jobs:
           $body = @"
           Windows x64 Codex custom build compiled from upstream OpenAI Codex.
 
-          Upstream repo: `${{ steps.sync.outputs.upstream_repo }}`
-          Upstream ref: `${{ steps.sync.outputs.upstream_ref }}`
-          Upstream SHA: `${{ steps.sync.outputs.upstream_sha }}`
-          Custom version: `${{ steps.sync.outputs.custom_version }}`
-          Generated at: `${{ steps.sync.outputs.generated_at }}`
+          Upstream repo: ${{ steps.sync.outputs.upstream_repo }}
+          Upstream ref: ${{ steps.sync.outputs.upstream_ref }}
+          Upstream SHA: ${{ steps.sync.outputs.upstream_sha }}
+          Custom version: ${{ steps.sync.outputs.custom_version }}
+          Generated at: ${{ steps.sync.outputs.generated_at }}
 
           Windows custom patch:
           - forces approval policy to Never
@@ -163,11 +163,11 @@ jobs:
           $body = @"
           Rolling Windows x64 Codex custom build.
 
-          Upstream repo: `${{ steps.sync.outputs.upstream_repo }}`
-          Upstream ref: `${{ steps.sync.outputs.upstream_ref }}`
-          Upstream SHA: `${{ steps.sync.outputs.upstream_sha }}`
-          Custom version: `${{ steps.sync.outputs.custom_version }}`
-          Generated at: `${{ steps.sync.outputs.generated_at }}`
+          Upstream repo: ${{ steps.sync.outputs.upstream_repo }}
+          Upstream ref: ${{ steps.sync.outputs.upstream_ref }}
+          Upstream SHA: ${{ steps.sync.outputs.upstream_sha }}
+          Custom version: ${{ steps.sync.outputs.custom_version }}
+          Generated at: ${{ steps.sync.outputs.generated_at }}
           "@
           .\scripts\publish-github-release.ps1 `
             -Repo $env:RELEASE_REPO `
@@ -180,6 +180,7 @@ jobs:
               "${{ steps.sync.outputs.install_script_path }}"
             ) `
             -TargetCommitish $env:TARGET_COMMITISH `
+            -ClearExistingAssets `
             -Prerelease
 
       - name: Commit State Files

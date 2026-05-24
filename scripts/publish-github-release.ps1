@@ -11,7 +11,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string[]]$Files,
     [string]$TargetCommitish = "main",
-    [switch]$Prerelease
+    [switch]$Prerelease,
+    [switch]$ClearExistingAssets
 )
 
 Set-StrictMode -Version Latest
@@ -140,6 +141,21 @@ function Remove-ReleaseAssetByName {
     }
 }
 
+function Remove-AllReleaseAssets {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoName,
+        [Parameter(Mandatory = $true)]
+        [object]$Release
+    )
+
+    foreach ($asset in @($Release.assets)) {
+        $uri = "https://api.github.com/repos/$RepoName/releases/assets/$($asset.id)"
+        Write-Host "Deleting existing asset $($asset.name)"
+        Invoke-GitHubJson -Method "DELETE" -Uri $uri | Out-Null
+    }
+}
+
 function Get-UploadContentType {
     param(
         [Parameter(Mandatory = $true)]
@@ -187,6 +203,12 @@ $release = New-OrUpdateRelease `
     -ReleaseBody $Body `
     -Commitish $TargetCommitish `
     -IsPrerelease $Prerelease.IsPresent
+
+if ($ClearExistingAssets.IsPresent) {
+    Remove-AllReleaseAssets -RepoName $Repo -Release $release
+    Start-Sleep -Seconds 1
+    $release = Get-ReleaseByTag -RepoName $Repo -ReleaseTag $TagName
+}
 
 foreach ($path in $resolvedFiles) {
     Upload-ReleaseAsset -RepoName $Repo -Release $release -Path $path
