@@ -1,0 +1,5 @@
+﻿interface:
+  display_name: GitHub Actions CI Debugger
+  short_description: Diagnose, fix, and verify GitHub Actions failures from a local checkout.
+  icon: wrench
+  accent_color: blue
