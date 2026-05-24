@@ -72,8 +72,8 @@ jobs:
         shell: pwsh
         run: |
           $paths = @(
-            Join-Path $HOME '.cargo\.package-cache',
-            Join-Path $HOME '.cargo\registry\index\index.crates.io-*\.cache\*.lock'
+            (Join-Path $HOME '.cargo\.package-cache'),
+            (Join-Path $HOME '.cargo\registry\index\index.crates.io-*\.cache\*.lock')
           )
           foreach ($path in $paths) {
             Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
