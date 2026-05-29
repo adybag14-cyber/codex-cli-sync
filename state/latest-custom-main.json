@@ -1,15 +1,15 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "5577a9e1482ed867318dad51a01e5d18a5c5e5fa",
-  "custom_version": "0.0.0-custom.202605291612",
+  "upstream_sha": "c9dc0f6338450c2bc8b70b96852f7ac422d75bbf",
+  "custom_version": "0.0.0-custom.202605291845",
   "windows_target": "x86_64-pc-windows-msvc",
-  "generated_at_utc": "2026-05-29T16:12:04.7974944Z",
-  "release_tag": "custom-windows-x64-5577a9e1482e",
+  "generated_at_utc": "2026-05-29T18:45:00.6945350Z",
+  "release_tag": "custom-windows-x64-c9dc0f633845",
   "rolling_tag": "latest-windows-x64-custom",
   "artifact": {
-    "name": "codex-windows-x64-custom-5577a9e1482e.zip",
-    "sha256": "1f2930e82ba057b433af243c2abef40b5ee08c86d74947d63d984b0fa589a5fc"
+    "name": "codex-windows-x64-custom-c9dc0f633845.zip",
+    "sha256": "1cc07ecabb00b88b138df9b82115922ad99f78c823c5bd948121db998e9494fd"
   },
   "patch_contract": {
     "approval_policy": "AskForApproval::Never on Windows",
@@ -22,11 +22,11 @@
   },
   "release_files": [
     {
-      "name": "codex-windows-x64-custom-5577a9e1482e.zip",
-      "sha256": "1f2930e82ba057b433af243c2abef40b5ee08c86d74947d63d984b0fa589a5fc"
+      "name": "codex-windows-x64-custom-c9dc0f633845.zip",
+      "sha256": "1cc07ecabb00b88b138df9b82115922ad99f78c823c5bd948121db998e9494fd"
     },
     {
-      "name": "codex-windows-x64-custom-5577a9e1482e.manifest.json",
+      "name": "codex-windows-x64-custom-c9dc0f633845.manifest.json",
       "sha256": null
     },
     {
