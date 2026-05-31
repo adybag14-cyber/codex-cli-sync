@@ -14,8 +14,9 @@ The scheduled workflow:
 - publishes a per-SHA prerelease and refreshes `latest-windows-x64-custom`
 - commits the latest synced upstream SHA and manifest after a successful build
 
-The Windows custom patch is maintained in [`scripts/patch-codex-windows-custom.ps1`](scripts/patch-codex-windows-custom.ps1). It fails the build if an upstream source anchor moves instead of publishing an unpatched binary.
+The Windows custom patch is maintained in [`scripts/patch-codex-windows-custom.ps1`](scripts/patch-codex-windows-custom.ps1). If an upstream source anchor moves, the workflow publishes a release card and manifest that explicitly say `CUSTOM PATCHES FAILED`, uploads no Codex binary for that run, and does not advance the successful upstream state.
 For Rust config construction, the patcher prefers named/shorthand struct-field rewriting over one large text anchor so normal upstream refactors can move or reformat surrounding code without losing the required Windows behavior.
+For ChatGPT login, the patcher uses flexible anchors around the login callback constants and bind fallback logic so routine upstream formatting/comment changes do not drop the Windows-safe callback-port fix.
 
 Patch contract:
 
@@ -26,6 +27,7 @@ Patch contract:
 - turn Windows sandbox setup into a no-op
 - skip exec policy approval requirements with `bypass_sandbox=true`
 - ignore tool-level sandbox escalation metadata on Windows
+- use login callback port `16455` on Windows and fall back to an OS-selected loopback port when Windows reserves the preferred port
 
 Release layout:
 

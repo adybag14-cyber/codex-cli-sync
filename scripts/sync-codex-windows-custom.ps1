@@ -26,6 +26,19 @@ function Write-ActionOutput {
     }
 }
 
+function Get-SingleLineSummary {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [int]$MaxLength = 1000
+    )
+
+    $summary = ($Text -replace '[\r\n]+', ' ' -replace '\s+', ' ').Trim()
+    if ($summary.Length -gt $MaxLength) {
+        return $summary.Substring(0, $MaxLength - 3) + "..."
+    }
+    return $summary
+}
+
 function Invoke-Git {
     param(
         [Parameter(Mandatory = $true)][string[]]$Args,
@@ -104,9 +117,22 @@ function Set-PackageJsonVersionIfPresent {
         return
     }
 
-    $json = Get-Content -Path $PackageJsonPath -Raw | ConvertFrom-Json
-    $json.version = $Version
-    $json | ConvertTo-Json -Depth 20 | Set-Content -Path $PackageJsonPath -Encoding utf8
+    $text = [System.IO.File]::ReadAllText($PackageJsonPath)
+    $regex = [regex]::new('(?m)^(\s*"version"\s*:\s*")[^"]+(")')
+    $matches = $regex.Matches($text)
+    if ($matches.Count -ne 1) {
+        throw "Unable to locate a single package.json version in $PackageJsonPath."
+    }
+
+    $updated = $regex.Replace(
+        $text,
+        [System.Text.RegularExpressions.MatchEvaluator]{
+            param($match)
+            return $match.Groups[1].Value + $Version + $match.Groups[2].Value
+        },
+        1
+    )
+    [System.IO.File]::WriteAllText($PackageJsonPath, $updated, [System.Text.UTF8Encoding]::new($false))
 }
 
 function New-CustomVersion {
@@ -206,6 +232,11 @@ $upstreamShortSha = $upstreamSha.Substring(0, 12)
 $customVersion = New-CustomVersion
 $releaseTag = "custom-windows-x64-$upstreamShortSha"
 $rollingTag = "latest-windows-x64-custom"
+$releaseWorkspace = Join-Path $WorkspaceDir "custom-$upstreamShortSha"
+$payloadName = "codex-windows-x64-custom-$upstreamShortSha"
+$bundlePath = [System.IO.Path]::GetFullPath((Join-Path $WorkspaceDir "$payloadName.zip"))
+$manifestPath = [System.IO.Path]::GetFullPath((Join-Path $WorkspaceDir "$payloadName.manifest.json"))
+$installScriptPath = [System.IO.Path]::GetFullPath((Join-Path $WorkspaceDir "install-custom-windows-x64.ps1"))
 
 Write-ActionOutput -Name "changed" -Value "false"
 Write-ActionOutput -Name "upstream_repo" -Value $UpstreamRepo
@@ -219,6 +250,9 @@ Write-ActionOutput -Name "generated_at" -Value $generatedAt
 Write-ActionOutput -Name "bundle_path" -Value ""
 Write-ActionOutput -Name "manifest_path" -Value ""
 Write-ActionOutput -Name "install_script_path" -Value ""
+Write-ActionOutput -Name "has_bundle" -Value "false"
+Write-ActionOutput -Name "patch_status" -Value "not_run"
+Write-ActionOutput -Name "patch_error_summary" -Value ""
 
 $currentSha = ""
 if (Test-Path -LiteralPath $latestShaPath -PathType Leaf) {
@@ -234,6 +268,8 @@ if (-not $Force -and $currentSha -eq $upstreamSha) {
 if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
     Invoke-Git -WorkingDirectory $sourceDir -Args @("remote", "set-url", "origin", $remoteUrl)
     Invoke-Git -WorkingDirectory $sourceDir -Args @("fetch", "--no-tags", "--depth", "1", "origin", $upstreamSha)
+    Invoke-Git -WorkingDirectory $sourceDir -Args @("reset", "--hard")
+    Invoke-Git -WorkingDirectory $sourceDir -Args @("clean", "-ffdx", "-e", "codex-rs/target/")
     Invoke-Git -WorkingDirectory $sourceDir -Args @("checkout", "--detach", "FETCH_HEAD")
     Invoke-Git -WorkingDirectory $sourceDir -Args @("reset", "--hard", "FETCH_HEAD")
     Invoke-Git -WorkingDirectory $sourceDir -Args @("clean", "-ffdx", "-e", "codex-rs/target/")
@@ -249,12 +285,47 @@ if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
 Set-CargoWorkspaceVersion -CargoTomlPath (Join-Path $sourceDir "codex-rs\Cargo.toml") -Version $customVersion
 Set-PackageJsonVersionIfPresent -PackageJsonPath (Join-Path $sourceDir "codex-cli\package.json") -Version $customVersion
 
-& (Join-Path $scriptRoot "patch-codex-windows-custom.ps1") -SourceRoot $sourceDir
-if ($LASTEXITCODE -ne 0) {
-    throw "Custom patch script failed."
-}
+try {
+    & (Join-Path $scriptRoot "patch-codex-windows-custom.ps1") -SourceRoot $sourceDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "Custom patch script failed with exit code $LASTEXITCODE."
+    }
 
-Invoke-Git -WorkingDirectory $sourceDir -Args @("diff", "--check")
+    Invoke-Git -WorkingDirectory $sourceDir -Args @("diff", "--check")
+} catch {
+    $patchErrorSummary = Get-SingleLineSummary -Text ([string]$_.Exception.Message)
+    $failureManifest = [ordered]@{
+        upstream_repo          = $UpstreamRepo
+        upstream_ref           = $UpstreamRef
+        upstream_sha           = $upstreamSha
+        custom_version         = $customVersion
+        windows_target         = $WindowsTarget
+        generated_at_utc       = $generatedAt
+        release_tag            = $releaseTag
+        rolling_tag            = $rollingTag
+        patch_status           = "failed"
+        custom_patches_failed  = $true
+        patch_error_summary    = $patchErrorSummary
+        artifact               = $null
+        release_note           = "CUSTOM PATCHES FAILED. No Codex binary was built or uploaded for this upstream SHA."
+        patch_contract         = [ordered]@{
+            required_outcome = "Windows custom patches must apply before a binary can be published."
+            login_callback   = "Expected 16455 on Windows, with OS-selected fallback port."
+        }
+        release_files          = @(
+            [ordered]@{ name = [System.IO.Path]::GetFileName($manifestPath); sha256 = $null }
+        )
+    }
+
+    Save-JsonFile -Path $manifestPath -Value $failureManifest
+    Write-ActionOutput -Name "changed" -Value "true"
+    Write-ActionOutput -Name "manifest_path" -Value $manifestPath
+    Write-ActionOutput -Name "patch_status" -Value "failed"
+    Write-ActionOutput -Name "patch_error_summary" -Value $patchErrorSummary
+    Write-Host "CUSTOM PATCHES FAILED: $patchErrorSummary"
+    Write-Host "Patch failure manifest created at $manifestPath"
+    return
+}
 
 Push-Location (Join-Path $sourceDir "codex-rs")
 try {
@@ -267,13 +338,8 @@ try {
 }
 
 $targetDir = Join-Path $sourceDir "codex-rs\target\$WindowsTarget\release"
-$releaseWorkspace = Join-Path $WorkspaceDir "custom-$upstreamShortSha"
-$payloadName = "codex-windows-x64-custom-$upstreamShortSha"
 $payloadRoot = Join-Path $releaseWorkspace $payloadName
 $resourcesDir = Join-Path $payloadRoot "codex-resources"
-$bundlePath = [System.IO.Path]::GetFullPath((Join-Path $WorkspaceDir "$payloadName.zip"))
-$manifestPath = [System.IO.Path]::GetFullPath((Join-Path $WorkspaceDir "$payloadName.manifest.json"))
-$installScriptPath = [System.IO.Path]::GetFullPath((Join-Path $WorkspaceDir "install-custom-windows-x64.ps1"))
 
 if (Test-Path -LiteralPath $releaseWorkspace) {
     Remove-Item -Recurse -Force -LiteralPath $releaseWorkspace
@@ -320,6 +386,8 @@ $manifest = [ordered]@{
     generated_at_utc   = $generatedAt
     release_tag        = $releaseTag
     rolling_tag        = $rollingTag
+    patch_status       = "applied"
+    custom_patches_failed = $false
     artifact           = [ordered]@{
         name   = [System.IO.Path]::GetFileName($bundlePath)
         sha256 = $bundleSha256
@@ -332,6 +400,7 @@ $manifest = [ordered]@{
         windows_sandbox_setup      = "No-op on Windows"
         exec_approval_requirement  = "Skip with bypass_sandbox=true on Windows"
         tool_sandbox_escalation    = "UseDefault and preapproved on Windows"
+        login_callback_port        = "16455 on Windows, with OS-selected fallback port"
     }
     release_files      = @(
         [ordered]@{ name = [System.IO.Path]::GetFileName($bundlePath); sha256 = $bundleSha256 },
@@ -348,5 +417,7 @@ Write-ActionOutput -Name "changed" -Value "true"
 Write-ActionOutput -Name "bundle_path" -Value $bundlePath
 Write-ActionOutput -Name "manifest_path" -Value $manifestPath
 Write-ActionOutput -Name "install_script_path" -Value $installScriptPath
+Write-ActionOutput -Name "has_bundle" -Value "true"
+Write-ActionOutput -Name "patch_status" -Value "applied"
 
 Write-Host "Custom bundle created at $bundlePath"

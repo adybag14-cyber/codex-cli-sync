@@ -106,7 +106,7 @@ jobs:
             out/codex-upstream/codex-rs/target
           key: ${{ steps.cargo-cache-restore.outputs.cache-primary-key }}
       - name: Upload Build Artifact
-        if: steps.sync.outputs.changed == 'true'
+        if: steps.sync.outputs.changed == 'true' && steps.sync.outputs.patch_status == 'applied'
         uses: actions/upload-artifact@v7
         with:
           name: codex-windows-x64-custom-${{ steps.sync.outputs.upstream_short_sha }}
@@ -114,6 +114,15 @@ jobs:
             ${{ steps.sync.outputs.bundle_path }}
             ${{ steps.sync.outputs.manifest_path }}
             ${{ steps.sync.outputs.install_script_path }}
+          if-no-files-found: error
+
+      - name: Upload Patch Failure Artifact
+        if: steps.sync.outputs.changed == 'true' && steps.sync.outputs.patch_status == 'failed'
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-windows-x64-custom-${{ steps.sync.outputs.upstream_short_sha }}-patch-failed
+          path: |
+            ${{ steps.sync.outputs.manifest_path }}
           if-no-files-found: error
 
       - name: Publish Versioned Release
@@ -124,7 +133,31 @@ jobs:
           RELEASE_REPO: ${{ github.repository }}
           TARGET_COMMITISH: ${{ github.ref_name }}
         run: |
-          $body = @"
+          $patchStatus = "${{ steps.sync.outputs.patch_status }}"
+          $patchErrorSummary = "${{ steps.sync.outputs.patch_error_summary }}"
+          if ($patchStatus -eq "failed") {
+            $releaseName = "Codex Windows x64 Custom ${{ steps.sync.outputs.upstream_short_sha }} (CUSTOM PATCHES FAILED)"
+            $files = @("${{ steps.sync.outputs.manifest_path }}")
+            $body = @"
+          CUSTOM PATCHES FAILED.
+
+          The repo-owned Windows custom patch did not apply, so this run did not build or upload a Codex binary for the resolved upstream SHA.
+
+          Upstream repo: ${{ steps.sync.outputs.upstream_repo }}
+          Upstream ref: ${{ steps.sync.outputs.upstream_ref }}
+          Upstream SHA: ${{ steps.sync.outputs.upstream_sha }}
+          Custom version attempted: ${{ steps.sync.outputs.custom_version }}
+          Generated at: ${{ steps.sync.outputs.generated_at }}
+          Patch error: $patchErrorSummary
+          "@
+          } else {
+            $releaseName = "Codex Windows x64 Custom ${{ steps.sync.outputs.upstream_short_sha }}"
+            $files = @(
+              "${{ steps.sync.outputs.bundle_path }}",
+              "${{ steps.sync.outputs.manifest_path }}",
+              "${{ steps.sync.outputs.install_script_path }}"
+            )
+            $body = @"
           Windows x64 Codex custom build compiled from upstream OpenAI Codex.
 
           Upstream repo: ${{ steps.sync.outputs.upstream_repo }}
@@ -138,17 +171,15 @@ jobs:
           - forces runtime permission profile to Disabled
           - disables Windows sandbox mode resolution and setup
           - bypasses exec policy/tool escalation prompts on Windows
+          - uses login callback port 16455 with OS-selected fallback
           "@
+          }
           .\scripts\publish-github-release.ps1 `
             -Repo $env:RELEASE_REPO `
             -TagName "${{ steps.sync.outputs.release_tag }}" `
-            -ReleaseName "Codex Windows x64 Custom ${{ steps.sync.outputs.upstream_short_sha }}" `
+            -ReleaseName $releaseName `
             -Body $body `
-            -Files @(
-              "${{ steps.sync.outputs.bundle_path }}",
-              "${{ steps.sync.outputs.manifest_path }}",
-              "${{ steps.sync.outputs.install_script_path }}"
-            ) `
+            -Files $files `
             -TargetCommitish $env:TARGET_COMMITISH `
             -Prerelease
 
@@ -160,7 +191,31 @@ jobs:
           RELEASE_REPO: ${{ github.repository }}
           TARGET_COMMITISH: ${{ github.ref_name }}
         run: |
-          $body = @"
+          $patchStatus = "${{ steps.sync.outputs.patch_status }}"
+          $patchErrorSummary = "${{ steps.sync.outputs.patch_error_summary }}"
+          if ($patchStatus -eq "failed") {
+            $releaseName = "Latest Codex Windows x64 Custom Build (CUSTOM PATCHES FAILED)"
+            $files = @("${{ steps.sync.outputs.manifest_path }}")
+            $body = @"
+          CUSTOM PATCHES FAILED.
+
+          The repo-owned Windows custom patch did not apply, so the rolling release has been updated with this failure card and no Codex binary was uploaded.
+
+          Upstream repo: ${{ steps.sync.outputs.upstream_repo }}
+          Upstream ref: ${{ steps.sync.outputs.upstream_ref }}
+          Upstream SHA: ${{ steps.sync.outputs.upstream_sha }}
+          Custom version attempted: ${{ steps.sync.outputs.custom_version }}
+          Generated at: ${{ steps.sync.outputs.generated_at }}
+          Patch error: $patchErrorSummary
+          "@
+          } else {
+            $releaseName = "Latest Codex Windows x64 Custom Build"
+            $files = @(
+              "${{ steps.sync.outputs.bundle_path }}",
+              "${{ steps.sync.outputs.manifest_path }}",
+              "${{ steps.sync.outputs.install_script_path }}"
+            )
+            $body = @"
           Rolling Windows x64 Codex custom build.
 
           Upstream repo: ${{ steps.sync.outputs.upstream_repo }}
@@ -169,25 +224,23 @@ jobs:
           Custom version: ${{ steps.sync.outputs.custom_version }}
           Generated at: ${{ steps.sync.outputs.generated_at }}
           "@
+          }
           .\scripts\publish-github-release.ps1 `
             -Repo $env:RELEASE_REPO `
             -TagName "${{ steps.sync.outputs.rolling_tag }}" `
-            -ReleaseName "Latest Codex Windows x64 Custom Build" `
+            -ReleaseName $releaseName `
             -Body $body `
-            -Files @(
-              "${{ steps.sync.outputs.bundle_path }}",
-              "${{ steps.sync.outputs.manifest_path }}",
-              "${{ steps.sync.outputs.install_script_path }}"
-            ) `
+            -Files $files `
             -TargetCommitish $env:TARGET_COMMITISH `
             -ClearExistingAssets `
             -Prerelease
 
       - name: Commit State Files
-        if: steps.sync.outputs.changed == 'true'
+        if: steps.sync.outputs.changed == 'true' && steps.sync.outputs.patch_status == 'applied'
         shell: pwsh
         env:
           UPSTREAM_SHA: ${{ steps.sync.outputs.upstream_sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

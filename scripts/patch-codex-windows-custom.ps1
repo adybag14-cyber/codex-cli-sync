@@ -56,6 +56,34 @@ function Replace-Once {
     Write-Host "Patched: $Description"
 }
 
+function Replace-Optional {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Pattern,
+        [Parameter(Mandatory = $true)][string]$Replacement,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+
+    $text = Get-Text -Path $Path
+    $regex = [regex]::new($Pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline -bor [System.Text.RegularExpressions.RegexOptions]::Multiline)
+    $matches = $regex.Matches($text)
+    if ($matches.Count -eq 0) {
+        Write-Host "Skipped optional patch: $Description"
+        return
+    }
+    if ($matches.Count -ne 1) {
+        throw "Optional patch anchor failed for $Description in $Path. Expected 0 or 1 matches, found $($matches.Count)."
+    }
+
+    $newText = $regex.Replace(
+        $text,
+        [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $Replacement },
+        1
+    )
+    Set-Text -Path $Path -Text $newText
+    Write-Host "Patched: $Description"
+}
+
 function Insert-AfterOnce {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -215,10 +243,80 @@ function Assert-Contains {
     }
 }
 
+function Set-LoginCallbackPortForWindowsCustom {
+    param(
+        [Parameter(Mandatory = $true)][string]$ServerPath,
+        [Parameter(Mandatory = $true)][string]$TestPath
+    )
+
+    Replace-Once `
+        -Path $ServerPath `
+        -Pattern 'const\s+DEFAULT_PORT\s*:\s*u16\s*=\s*\d+\s*;\s*(?://[^\r\n]*(?:\r?\n))*\s*const\s+FALLBACK_PORT\s*:\s*u16\s*=\s*\d+\s*;' `
+        -Replacement @'
+const DEFAULT_PORT: u16 = 16455;
+// On Windows, Hyper-V/HNS can reserve low callback ports such as 1455/1457.
+// Prefer a high local port and use port 0 as a last resort so the OS chooses
+// an available loopback port instead of failing with WSAEACCES.
+const FALLBACK_PORT: u16 = 0;
+'@ `
+        -Description "move login callback server to a high Windows-safe port"
+
+    Replace-Once `
+        -Path $ServerPath `
+        -Pattern 'let\s+(?<name>is_[A-Za-z0-9_]+)\s*=\s*err\s*\r?\n\s*\.downcast_ref::<io::Error>\(\)\s*\r?\n\s*\.map\(\|io_err\|\s*(?:io_err\.kind\(\)\s*==\s*io::ErrorKind::AddrInUse|\{\s*matches!\(\s*io_err\.kind\(\),\s*io::ErrorKind::AddrInUse(?:\s*\|\s*io::ErrorKind::PermissionDenied)?\s*\)\s*\})\s*\)\s*\r?\n\s*\.unwrap_or\(false\);' `
+        -Replacement @'
+let is_port_unavailable = err
+                    .downcast_ref::<io::Error>()
+                    .map(|io_err| {
+                        matches!(
+                            io_err.kind(),
+                            io::ErrorKind::AddrInUse | io::ErrorKind::PermissionDenied
+                        )
+                    })
+                    .unwrap_or(false);
+'@ `
+        -Description "treat Windows access-denied port reservations as fallback candidates"
+
+    Replace-Once `
+        -Path $ServerPath `
+        -Pattern 'if\s+is_[A-Za-z0-9_]+\s*\{' `
+        -Replacement 'if is_port_unavailable {' `
+        -Description "use high-port fallback for unavailable login callback ports"
+
+    Replace-Optional `
+        -Path $ServerPath `
+        -Pattern '"default login callback port is unavailable; falling back to the registered fallback port"' `
+        -Replacement '"default login callback port is unavailable; falling back to an OS-selected loopback port"' `
+        -Description "update login fallback diagnostic"
+
+    Replace-Once `
+        -Path $TestPath `
+        -Pattern 'const\s+DEFAULT_LOGIN_PORT\s*:\s*u16\s*=\s*\d+\s*;\r?\nconst\s+FALLBACK_LOGIN_PORT\s*:\s*u16\s*=\s*\d+\s*;' `
+        -Replacement @'
+const DEFAULT_LOGIN_PORT: u16 = 16455;
+const FALLBACK_LOGIN_PORT: u16 = 0;
+'@ `
+        -Description "update login callback test constants"
+
+    Replace-Once `
+        -Path $TestPath `
+        -Pattern 'assert_eq!\(actual_port,\s*FALLBACK_LOGIN_PORT\);\s*assert!\(auth_url\.contains\(&format!\(\s*"redirect_uri=http%3A%2F%2Flocalhost%3A\{FALLBACK_LOGIN_PORT\}%2Fauth%2Fcallback"\s*\)\)\);' `
+        -Replacement @'
+assert_ne!(actual_port, DEFAULT_LOGIN_PORT);
+    assert!(actual_port > 0);
+    assert!(auth_url.contains(&format!(
+        "redirect_uri=http%3A%2F%2Flocalhost%3A{actual_port}%2Fauth%2Fcallback"
+    )));
+'@ `
+        -Description "update login fallback test for OS-selected port"
+}
+
 $configPath = Get-SourceFile -RelativePath "codex-rs\core\src\config\mod.rs"
 $windowsSandboxPath = Get-SourceFile -RelativePath "codex-rs\core\src\windows_sandbox.rs"
 $toolHandlersPath = Get-SourceFile -RelativePath "codex-rs\core\src\tools\handlers\mod.rs"
 $execPolicyPath = Get-SourceFile -RelativePath "codex-rs\core\src\exec_policy.rs"
+$loginServerPath = Get-SourceFile -RelativePath "codex-rs\login\src\server.rs"
+$loginServerE2ePath = Get-SourceFile -RelativePath "codex-rs\login\tests\suite\login_server_e2e.rs"
 
 $permissionsReplacement = @'
                 approval_policy: if cfg!(target_os = "windows") {
@@ -258,6 +356,8 @@ if (-not (Set-ConfigPermissionsForWindowsCustom -Path $configPath)) {
         -Replacement $permissionsReplacement `
         -Description "force Windows permissions to no approval and no sandbox"
 }
+
+Set-LoginCallbackPortForWindowsCustom -ServerPath $loginServerPath -TestPath $loginServerE2ePath
 
 Replace-Once `
     -Path $windowsSandboxPath `
@@ -356,5 +456,8 @@ Assert-Contains -Path $windowsSandboxPath -Needle 'return WindowsSandboxLevel::D
 Assert-Contains -Path $windowsSandboxPath -Needle 'return Ok(());' -Description "sandbox setup no-op"
 Assert-Contains -Path $toolHandlersPath -Needle 'sandbox_permissions: SandboxPermissions::UseDefault' -Description "tool sandbox escalation disabled"
 Assert-Contains -Path $execPolicyPath -Needle 'bypass_sandbox: true' -Description "exec policy bypass"
+Assert-Contains -Path $loginServerPath -Needle 'const DEFAULT_PORT: u16 = 16455;' -Description "high login callback port"
+Assert-Contains -Path $loginServerPath -Needle 'const FALLBACK_PORT: u16 = 0;' -Description "OS-selected login callback fallback port"
+Assert-Contains -Path $loginServerPath -Needle 'io::ErrorKind::PermissionDenied' -Description "login callback access-denied fallback"
 
 Write-Host "Windows custom Codex patch verified."
