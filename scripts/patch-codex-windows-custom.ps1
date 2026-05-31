@@ -253,13 +253,11 @@ function Set-LoginCallbackPortForWindowsCustom {
         -Path $ServerPath `
         -Pattern 'const\s+DEFAULT_PORT\s*:\s*u16\s*=\s*\d+\s*;\s*(?://[^\r\n]*(?:\r?\n))*\s*const\s+FALLBACK_PORT\s*:\s*u16\s*=\s*\d+\s*;' `
         -Replacement @'
-const DEFAULT_PORT: u16 = 16455;
-// On Windows, Hyper-V/HNS can reserve low callback ports such as 1455/1457.
-// Prefer a high local port and use port 0 as a last resort so the OS chooses
-// an available loopback port instead of failing with WSAEACCES.
-const FALLBACK_PORT: u16 = 0;
+const DEFAULT_PORT: u16 = 1455;
+// Keep in sync with the Codex CLI Hydra redirect URI allow-list.
+const FALLBACK_PORT: u16 = 1457;
 '@ `
-        -Description "move login callback server to a high Windows-safe port"
+        -Description "keep login callback server on registered OAuth redirect ports"
 
     Replace-Once `
         -Path $ServerPath `
@@ -285,30 +283,18 @@ let is_port_unavailable = err
 
     Replace-Optional `
         -Path $ServerPath `
-        -Pattern '"default login callback port is unavailable; falling back to the registered fallback port"' `
-        -Replacement '"default login callback port is unavailable; falling back to an OS-selected loopback port"' `
+        -Pattern '"default login callback port is unavailable; falling back to (?:the registered fallback port|an OS-selected loopback port)"' `
+        -Replacement '"default login callback port is unavailable; falling back to the registered fallback port"' `
         -Description "update login fallback diagnostic"
 
     Replace-Once `
         -Path $TestPath `
         -Pattern 'const\s+DEFAULT_LOGIN_PORT\s*:\s*u16\s*=\s*\d+\s*;\r?\nconst\s+FALLBACK_LOGIN_PORT\s*:\s*u16\s*=\s*\d+\s*;' `
         -Replacement @'
-const DEFAULT_LOGIN_PORT: u16 = 16455;
-const FALLBACK_LOGIN_PORT: u16 = 0;
+const DEFAULT_LOGIN_PORT: u16 = 1455;
+const FALLBACK_LOGIN_PORT: u16 = 1457;
 '@ `
         -Description "update login callback test constants"
-
-    Replace-Once `
-        -Path $TestPath `
-        -Pattern 'assert_eq!\(actual_port,\s*FALLBACK_LOGIN_PORT\);\s*assert!\(auth_url\.contains\(&format!\(\s*"redirect_uri=http%3A%2F%2Flocalhost%3A\{FALLBACK_LOGIN_PORT\}%2Fauth%2Fcallback"\s*\)\)\);' `
-        -Replacement @'
-assert_ne!(actual_port, DEFAULT_LOGIN_PORT);
-    assert!(actual_port > 0);
-    assert!(auth_url.contains(&format!(
-        "redirect_uri=http%3A%2F%2Flocalhost%3A{actual_port}%2Fauth%2Fcallback"
-    )));
-'@ `
-        -Description "update login fallback test for OS-selected port"
 }
 
 $configPath = Get-SourceFile -RelativePath "codex-rs\core\src\config\mod.rs"
@@ -456,8 +442,8 @@ Assert-Contains -Path $windowsSandboxPath -Needle 'return WindowsSandboxLevel::D
 Assert-Contains -Path $windowsSandboxPath -Needle 'return Ok(());' -Description "sandbox setup no-op"
 Assert-Contains -Path $toolHandlersPath -Needle 'sandbox_permissions: SandboxPermissions::UseDefault' -Description "tool sandbox escalation disabled"
 Assert-Contains -Path $execPolicyPath -Needle 'bypass_sandbox: true' -Description "exec policy bypass"
-Assert-Contains -Path $loginServerPath -Needle 'const DEFAULT_PORT: u16 = 16455;' -Description "high login callback port"
-Assert-Contains -Path $loginServerPath -Needle 'const FALLBACK_PORT: u16 = 0;' -Description "OS-selected login callback fallback port"
+Assert-Contains -Path $loginServerPath -Needle 'const DEFAULT_PORT: u16 = 1455;' -Description "registered default login callback port"
+Assert-Contains -Path $loginServerPath -Needle 'const FALLBACK_PORT: u16 = 1457;' -Description "registered fallback login callback port"
 Assert-Contains -Path $loginServerPath -Needle 'io::ErrorKind::PermissionDenied' -Description "login callback access-denied fallback"
 
 Write-Host "Windows custom Codex patch verified."

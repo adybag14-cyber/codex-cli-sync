@@ -310,7 +310,7 @@ try {
         release_note           = "CUSTOM PATCHES FAILED. No Codex binary was built or uploaded for this upstream SHA."
         patch_contract         = [ordered]@{
             required_outcome = "Windows custom patches must apply before a binary can be published."
-            login_callback   = "Expected 16455 on Windows, with OS-selected fallback port."
+            login_callback   = "Expected registered OAuth redirect ports 1455 and 1457, with PermissionDenied fallback handling."
         }
         release_files          = @(
             [ordered]@{ name = [System.IO.Path]::GetFileName($manifestPath); sha256 = $null }
@@ -400,7 +400,7 @@ $manifest = [ordered]@{
         windows_sandbox_setup      = "No-op on Windows"
         exec_approval_requirement  = "Skip with bypass_sandbox=true on Windows"
         tool_sandbox_escalation    = "UseDefault and preapproved on Windows"
-        login_callback_port        = "16455 on Windows, with OS-selected fallback port"
+        login_callback_port        = "Registered OAuth redirect ports 1455 and 1457, with PermissionDenied fallback handling"
     }
     release_files      = @(
         [ordered]@{ name = [System.IO.Path]::GetFileName($bundlePath); sha256 = $bundleSha256 },

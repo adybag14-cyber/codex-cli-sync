@@ -27,7 +27,7 @@ Patch contract:
 - turn Windows sandbox setup into a no-op
 - skip exec policy approval requirements with `bypass_sandbox=true`
 - ignore tool-level sandbox escalation metadata on Windows
-- use login callback port `16455` on Windows and fall back to an OS-selected loopback port when Windows reserves the preferred port
+- use the registered OAuth callback ports `1455` and `1457`, and treat Windows `PermissionDenied` on the default port as a fallback condition
 
 Release layout:
 

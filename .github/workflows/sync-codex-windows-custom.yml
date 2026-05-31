@@ -171,7 +171,7 @@ jobs:
           - forces runtime permission profile to Disabled
           - disables Windows sandbox mode resolution and setup
           - bypasses exec policy/tool escalation prompts on Windows
-          - uses login callback port 16455 with OS-selected fallback
+          - uses the registered OAuth callback ports 1455 and 1457, with Windows PermissionDenied fallback handling
           "@
           }
           .\scripts\publish-github-release.ps1 `
