@@ -1,15 +1,17 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "cdde711fac008cd4e1115603ead713cf23b1a580",
-  "custom_version": "0.0.0-custom.202605311027",
+  "upstream_sha": "e93dc98a48d597df322436ffe8d03bfd7ec63b3b",
+  "custom_version": "0.0.0-custom.202605312052",
   "windows_target": "x86_64-pc-windows-msvc",
-  "generated_at_utc": "2026-05-31T10:27:03.8947338Z",
-  "release_tag": "custom-windows-x64-cdde711fac00",
+  "generated_at_utc": "2026-05-31T20:52:53.7601924Z",
+  "release_tag": "custom-windows-x64-e93dc98a48d5",
   "rolling_tag": "latest-windows-x64-custom",
+  "patch_status": "applied",
+  "custom_patches_failed": false,
   "artifact": {
-    "name": "codex-windows-x64-custom-cdde711fac00.zip",
-    "sha256": "39c699d15bcb66ea28d817ea5dd0f3326149c606919673a7c59ee9a3258fd345"
+    "name": "codex-windows-x64-custom-e93dc98a48d5.zip",
+    "sha256": "41dbcaa6887db429bf91dd37447983ce0b9f8527235a65bee7c0a938c740eced"
   },
   "patch_contract": {
     "approval_policy": "AskForApproval::Never on Windows",
@@ -18,15 +20,16 @@
     "windows_sandbox_level": "WindowsSandboxLevel::Disabled on Windows",
     "windows_sandbox_setup": "No-op on Windows",
     "exec_approval_requirement": "Skip with bypass_sandbox=true on Windows",
-    "tool_sandbox_escalation": "UseDefault and preapproved on Windows"
+    "tool_sandbox_escalation": "UseDefault and preapproved on Windows",
+    "login_callback_port": "16455 on Windows, with OS-selected fallback port"
   },
   "release_files": [
     {
-      "name": "codex-windows-x64-custom-cdde711fac00.zip",
-      "sha256": "39c699d15bcb66ea28d817ea5dd0f3326149c606919673a7c59ee9a3258fd345"
+      "name": "codex-windows-x64-custom-e93dc98a48d5.zip",
+      "sha256": "41dbcaa6887db429bf91dd37447983ce0b9f8527235a65bee7c0a938c740eced"
     },
     {
-      "name": "codex-windows-x64-custom-cdde711fac00.manifest.json",
+      "name": "codex-windows-x64-custom-e93dc98a48d5.manifest.json",
       "sha256": null
     },
     {
