@@ -291,7 +291,7 @@ let is_port_unavailable = err
         -Path $ServerPath `
         -Pattern 'if\s+is_[A-Za-z0-9_]+\s*\{' `
         -Replacement 'if is_port_unavailable {' `
-        -Description "use high-port fallback for unavailable login callback ports"
+        -Description "use registered fallback port for unavailable login callback ports"
 
     Replace-Optional `
         -Path $ServerPath `
@@ -456,8 +456,12 @@ Assert-Contains -Path $toolHandlersPath -Needle 'sandbox_permissions: SandboxPer
 Assert-Contains -Path $execPolicyPath -Needle 'bypass_sandbox: true' -Description "exec policy bypass"
 Assert-Contains -Path $loginServerPath -Needle 'const DEFAULT_PORT: u16 = 1455;' -Description "registered default login callback port"
 Assert-Contains -Path $loginServerPath -Needle 'const FALLBACK_PORT: u16 = 1457;' -Description "registered fallback login callback port"
+Assert-Contains -Path $loginServerE2ePath -Needle 'const DEFAULT_LOGIN_PORT: u16 = 1455;' -Description "registered default login callback test port"
+Assert-Contains -Path $loginServerE2ePath -Needle 'const FALLBACK_LOGIN_PORT: u16 = 1457;' -Description "registered fallback login callback test port"
 Assert-Contains -Path $loginServerPath -Needle 'io::ErrorKind::PermissionDenied' -Description "login callback access-denied fallback"
 Assert-NotContains -Path $loginServerPath -Needle 'const DEFAULT_PORT: u16 = 16455;' -Description "unregistered login callback default port"
 Assert-NotContains -Path $loginServerPath -Needle 'const FALLBACK_PORT: u16 = 0;' -Description "unregistered port-zero login callback fallback"
+Assert-NotContains -Path $loginServerE2ePath -Needle 'const DEFAULT_LOGIN_PORT: u16 = 16455;' -Description "unregistered login callback test default port"
+Assert-NotContains -Path $loginServerE2ePath -Needle 'const FALLBACK_LOGIN_PORT: u16 = 0;' -Description "unregistered port-zero login callback test fallback"
 
 Write-Host "Windows custom Codex patch verified."

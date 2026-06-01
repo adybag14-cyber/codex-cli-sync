@@ -28,6 +28,7 @@ Patch contract:
 - skip exec policy approval requirements with `bypass_sandbox=true`
 - ignore tool-level sandbox escalation metadata on Windows
 - use the registered OAuth callback ports `1455` and `1457`, and treat Windows `PermissionDenied` on the default port as a fallback condition
+- fail the custom patch if upstream's unregistered `16455` default or port-`0` fallback remains in the login server or login e2e constants
 
 Release layout:
 
