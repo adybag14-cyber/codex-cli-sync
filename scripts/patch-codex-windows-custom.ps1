@@ -243,6 +243,18 @@ function Assert-Contains {
     }
 }
 
+function Assert-NotContains {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Needle,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+    $text = Get-Text -Path $Path
+    if ($text.Contains($Needle)) {
+        throw "Patch verification failed for $Description in $Path."
+    }
+}
+
 function Set-LoginCallbackPortForWindowsCustom {
     param(
         [Parameter(Mandatory = $true)][string]$ServerPath,
@@ -283,7 +295,7 @@ let is_port_unavailable = err
 
     Replace-Optional `
         -Path $ServerPath `
-        -Pattern '"default login callback port is unavailable; falling back to (?:the registered fallback port|an OS-selected loopback port)"' `
+        -Pattern '"default login callback port is unavailable; falling back to [^"]+"' `
         -Replacement '"default login callback port is unavailable; falling back to the registered fallback port"' `
         -Description "update login fallback diagnostic"
 
@@ -445,5 +457,7 @@ Assert-Contains -Path $execPolicyPath -Needle 'bypass_sandbox: true' -Descriptio
 Assert-Contains -Path $loginServerPath -Needle 'const DEFAULT_PORT: u16 = 1455;' -Description "registered default login callback port"
 Assert-Contains -Path $loginServerPath -Needle 'const FALLBACK_PORT: u16 = 1457;' -Description "registered fallback login callback port"
 Assert-Contains -Path $loginServerPath -Needle 'io::ErrorKind::PermissionDenied' -Description "login callback access-denied fallback"
+Assert-NotContains -Path $loginServerPath -Needle 'const DEFAULT_PORT: u16 = 16455;' -Description "unregistered login callback default port"
+Assert-NotContains -Path $loginServerPath -Needle 'const FALLBACK_PORT: u16 = 0;' -Description "unregistered port-zero login callback fallback"
 
 Write-Host "Windows custom Codex patch verified."
