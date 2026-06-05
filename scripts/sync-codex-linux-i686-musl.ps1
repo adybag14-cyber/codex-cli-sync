@@ -578,6 +578,15 @@ function Set-I686MuslBuildEnvironment {
     $env:AWS_LC_SYS_NO_JITTER_ENTROPY = "1"
     $env:PKG_CONFIG_ALLOW_CROSS = "1"
 
+    # Zig's i686 musl libatomic does not provide __atomic_is_lock_free; make
+    # vendored OpenSSL use its lock-based pthread atomic fallback instead.
+    $opensslNoAtomicsFlag = "-D__STDC_NO_ATOMICS__"
+    if ([string]::IsNullOrWhiteSpace($env:CFLAGS_i686_unknown_linux_musl)) {
+        $env:CFLAGS_i686_unknown_linux_musl = $opensslNoAtomicsFlag
+    } elseif ($env:CFLAGS_i686_unknown_linux_musl -notmatch [regex]::Escape($opensslNoAtomicsFlag)) {
+        $env:CFLAGS_i686_unknown_linux_musl = "$($env:CFLAGS_i686_unknown_linux_musl) $opensslNoAtomicsFlag"
+    }
+
     $rustFlags = "-C target-feature=+crt-static -C strip=symbols"
     if ([string]::IsNullOrWhiteSpace($env:RUSTFLAGS)) {
         $env:RUSTFLAGS = $rustFlags
@@ -815,6 +824,7 @@ $manifest = [ordered]@{
         vendored_openssl_for_i686_musl = [bool]$addedVendoredOpenSsl
         v8_code_mode_disabled_for_i686_musl = [bool]$disabledV8CodeMode
         linux_sandbox_syscalls_patched_for_i686_musl = [bool]$patchedLinuxSandboxSyscalls
+        openssl_no_c11_atomics_for_i686_musl = $true
         ca_certificates_bundle_source  = $caCertPath
         cargo_command                  = "cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget"
     }
