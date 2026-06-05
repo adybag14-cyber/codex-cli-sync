@@ -579,13 +579,15 @@ function Set-I686MuslBuildEnvironment {
     $env:PKG_CONFIG_ALLOW_CROSS = "1"
     $env:CARGO_BUILD_JOBS = "2"
 
-    # Zig's i686 musl libatomic does not provide __atomic_is_lock_free; make
-    # vendored OpenSSL use its lock-based pthread atomic fallback instead.
-    $opensslNoAtomicsFlag = "-D__STDC_NO_ATOMICS__"
-    if ([string]::IsNullOrWhiteSpace($env:CFLAGS_i686_unknown_linux_musl)) {
-        $env:CFLAGS_i686_unknown_linux_musl = $opensslNoAtomicsFlag
-    } elseif ($env:CFLAGS_i686_unknown_linux_musl -notmatch [regex]::Escape($opensslNoAtomicsFlag)) {
-        $env:CFLAGS_i686_unknown_linux_musl = "$($env:CFLAGS_i686_unknown_linux_musl) $opensslNoAtomicsFlag"
+    # Zig's i686 musl libatomic does not provide __atomic_is_lock_free. OpenSSL
+    # 3.5's pthread atomics skip that code path when BROKEN_CLANG_ATOMICS is set.
+    $opensslAtomicFallbackFlags = @("-D__STDC_NO_ATOMICS__", "-DBROKEN_CLANG_ATOMICS")
+    foreach ($flag in $opensslAtomicFallbackFlags) {
+        if ([string]::IsNullOrWhiteSpace($env:CFLAGS_i686_unknown_linux_musl)) {
+            $env:CFLAGS_i686_unknown_linux_musl = $flag
+        } elseif ($env:CFLAGS_i686_unknown_linux_musl -notmatch [regex]::Escape($flag)) {
+            $env:CFLAGS_i686_unknown_linux_musl = "$($env:CFLAGS_i686_unknown_linux_musl) $flag"
+        }
     }
 
     $rustFlags = "-C target-feature=+crt-static -C strip=symbols"
@@ -719,6 +721,8 @@ try {
         throw "Rust target $LinuxTarget is not installed after rustup target add."
     }
 
+    Write-Host "i686 OpenSSL CFLAGS: $env:CFLAGS_i686_unknown_linux_musl"
+
     & rustc --print target-libdir --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
         throw "rustc could not resolve target libdir for $LinuxTarget."
@@ -832,6 +836,7 @@ $manifest = [ordered]@{
         v8_code_mode_disabled_for_i686_musl = [bool]$disabledV8CodeMode
         linux_sandbox_syscalls_patched_for_i686_musl = [bool]$patchedLinuxSandboxSyscalls
         openssl_no_c11_atomics_for_i686_musl = $true
+        openssl_broken_clang_atomics_for_i686_musl = $true
         openssl_sys_cleaned_for_i686_musl = $true
         cargo_build_jobs              = $env:CARGO_BUILD_JOBS
         ca_certificates_bundle_source  = $caCertPath
