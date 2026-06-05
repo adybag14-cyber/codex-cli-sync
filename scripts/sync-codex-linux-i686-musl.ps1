@@ -122,100 +122,7 @@ openssl-sys = { workspace = true, features = ["vendored"] }
     return $true
 }
 
-function New-ZigMuslCompilerWrappers {
-    param([Parameter(Mandatory = $true)][string]$ToolRoot)
-
-    if (-not (Get-Command zig -ErrorAction SilentlyContinue)) {
-        throw "zig is required to cross-build $LinuxTarget."
-    }
-
-    New-Item -ItemType Directory -Force -Path $ToolRoot | Out-Null
-    $cc = Join-Path $ToolRoot "zigcc"
-    $cxx = Join-Path $ToolRoot "zigcxx"
-
-    $ccText = @'
-#!/usr/bin/env bash
-set -euo pipefail
-
-args=()
-skip_next=0
-pending_include=0
-for arg in "$@"; do
-  if [[ "${pending_include}" -eq 1 ]]; then
-    pending_include=0
-    if [[ "${arg}" == /usr/include || "${arg}" == /usr/include/* ]]; then
-      args+=("-idirafter" "${arg}")
-    else
-      args+=("-I" "${arg}")
-    fi
-    continue
-  fi
-
-  if [[ "${skip_next}" -eq 1 ]]; then
-    skip_next=0
-    continue
-  fi
-
-  case "${arg}" in
-    --target)
-      skip_next=1
-      continue
-      ;;
-    --target=*|-target=*|-target)
-      if [[ "${arg}" == "-target" ]]; then
-        skip_next=1
-      fi
-      continue
-      ;;
-    -I)
-      pending_include=1
-      continue
-      ;;
-    -I/usr/include|-I/usr/include/*)
-      args+=("-idirafter" "${arg#-I}")
-      continue
-      ;;
-    -Wp,-U_FORTIFY_SOURCE)
-      args+=("-U_FORTIFY_SOURCE")
-      continue
-      ;;
-  esac
-  args+=("${arg}")
-done
-
-exec zig cc -target i686-linux-musl "${args[@]}" -fno-sanitize=undefined
-'@
-
-    $cxxText = $ccText -replace 'exec zig cc -target i686-linux-musl', 'exec zig c++ -target i686-linux-musl'
-
-    Set-Content -Path $cc -Value $ccText -Encoding utf8
-    Set-Content -Path $cxx -Value $cxxText -Encoding utf8
-    & chmod +x $cc $cxx
-    if ($LASTEXITCODE -ne 0) {
-        throw "chmod failed for Zig compiler wrappers."
-    }
-
-    return [pscustomobject]@{
-        Cc  = [System.IO.Path]::GetFullPath($cc)
-        Cxx = [System.IO.Path]::GetFullPath($cxx)
-    }
-}
-
 function Set-I686MuslBuildEnvironment {
-    param([Parameter(Mandatory = $true)][object]$Wrappers)
-
-    $env:CC = $Wrappers.Cc
-    $env:CXX = $Wrappers.Cxx
-    $env:TARGET_CC = $Wrappers.Cc
-    $env:TARGET_CXX = $Wrappers.Cxx
-    $env:CC_i686_unknown_linux_musl = $Wrappers.Cc
-    $env:CXX_i686_unknown_linux_musl = $Wrappers.Cxx
-    $env:CARGO_TARGET_I686_UNKNOWN_LINUX_MUSL_LINKER = $Wrappers.Cc
-    $env:CMAKE_C_COMPILER = $Wrappers.Cc
-    $env:CMAKE_CXX_COMPILER = $Wrappers.Cxx
-    $env:CFLAGS = "-pthread"
-    $env:CXXFLAGS = "-pthread"
-    $env:CMAKE_ARGS = "-DCMAKE_HAVE_THREADS_LIBRARY=1 -DCMAKE_USE_PTHREADS_INIT=1 -DCMAKE_THREAD_LIBS_INIT=-pthread -DTHREADS_PREFER_PTHREAD_FLAG=ON"
     $env:OPENSSL_STATIC = "1"
     $env:AWS_LC_SYS_NO_JITTER_ENTROPY = "1"
     $env:PKG_CONFIG_ALLOW_CROSS = "1"
@@ -326,14 +233,13 @@ if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
 
 $cliCargoTomlPath = Join-Path $sourceDir "codex-rs/cli/Cargo.toml"
 $addedVendoredOpenSsl = Enable-I686MuslVendoredOpenSsl -CargoTomlPath $cliCargoTomlPath
-$wrappers = New-ZigMuslCompilerWrappers -ToolRoot (Join-Path $WorkspaceDir "i686-musl-tools")
-Set-I686MuslBuildEnvironment -Wrappers $wrappers
+Set-I686MuslBuildEnvironment
 
 Push-Location (Join-Path $sourceDir "codex-rs")
 try {
-    cargo build --release --target $LinuxTarget --bin codex
+    cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
-        throw "cargo build failed with exit code $LASTEXITCODE"
+        throw "cargo zigbuild failed with exit code $LASTEXITCODE"
     }
 } finally {
     Pop-Location
@@ -413,7 +319,7 @@ $manifest = [ordered]@{
     build_adjustments          = [ordered]@{
         vendored_openssl_for_i686_musl = [bool]$addedVendoredOpenSsl
         ca_certificates_bundle_source  = $caCertPath
-        zig_cc_target                  = "i686-linux-musl"
+        cargo_command                  = "cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget"
     }
     verification              = [ordered]@{
         version_output = $versionOutput

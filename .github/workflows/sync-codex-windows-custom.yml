@@ -292,8 +292,10 @@ jobs:
             pkg-config \
             tar
           rustup target add i686-unknown-linux-musl
+          cargo install cargo-zigbuild --locked
           rustc --version
           cargo --version
+          cargo zigbuild --version
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
