@@ -413,12 +413,11 @@ Insert-AfterOnce `
 
 Insert-AfterOnce `
     -Path $toolHandlersPath `
-    -Pattern 'pub\(super\) async fn apply_granted_turn_permissions\(\s*session: &Session,\s*cwd: &std::path::Path,\s*sandbox_permissions: SandboxPermissions,\s*additional_permissions: Option<AdditionalPermissionProfile>,\s*\) -> EffectiveAdditionalPermissions \{\r?\n' `
+    -Pattern 'pub\(super\) async fn apply_granted_turn_permissions\(\s*session: &Session,\s*(?:environment_id: &str,\s*)?cwd: &(?:std::path::)?Path,\s*sandbox_permissions: SandboxPermissions,\s*additional_permissions: Option<AdditionalPermissionProfile>,\s*\) -> EffectiveAdditionalPermissions \{\r?\n' `
     -Insertion @'
     if cfg!(target_os = "windows") {
         let _ = (
             session,
-            cwd,
             &sandbox_permissions,
             additional_permissions.as_ref(),
         );

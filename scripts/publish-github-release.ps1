@@ -165,6 +165,7 @@ function Get-UploadContentType {
     switch ([System.IO.Path]::GetExtension($Path).ToLowerInvariant()) {
         ".json" { return "application/json" }
         ".zip" { return "application/zip" }
+        ".gz" { return "application/gzip" }
         default { return "application/octet-stream" }
     }
 }

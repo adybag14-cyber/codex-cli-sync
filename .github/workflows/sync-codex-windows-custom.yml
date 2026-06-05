@@ -20,6 +20,7 @@ on:
       - .github/workflows/sync-codex-windows-custom.yml
       - scripts/patch-codex-windows-custom.ps1
       - scripts/publish-github-release.ps1
+      - scripts/sync-codex-linux-i686-musl.ps1
       - scripts/sync-codex-windows-custom.ps1
       - README.md
   schedule:
@@ -250,4 +251,203 @@ jobs:
             exit 0
           }
           git commit -m "Sync custom Codex $env:UPSTREAM_SHA"
+          git -c http.extraheader="AUTHORIZATION: bearer $env:GITHUB_TOKEN" push origin HEAD:$env:GITHUB_REF_NAME
+
+  linux-i686-musl:
+    needs: sync
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - name: Refresh Branch
+        shell: pwsh
+        run: |
+          git fetch origin $env:GITHUB_REF_NAME
+          git checkout $env:GITHUB_REF_NAME
+          git pull --ff-only origin $env:GITHUB_REF_NAME
+
+      - name: Prepare Linux i686 Build Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            clang \
+            cmake \
+            curl \
+            file \
+            gzip \
+            lld \
+            make \
+            perl \
+            pkg-config \
+            tar
+          rustup target add i686-unknown-linux-musl
+          rustc --version
+          cargo --version
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+          use-cache: false
+
+      - name: Restore Linux i686 Cargo Cache
+        id: linux-i686-cargo-cache-restore
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            out/codex-upstream-linux-i686/codex-rs/target
+          key: linux-i686-musl-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/sync-codex-linux-i686-musl.ps1', 'state/latest-linux-i686-musl-sha.txt') }}
+          restore-keys: |
+            linux-i686-musl-cargo-${{ runner.os }}-
+
+      - name: Remove Incomplete Cargo Cache Locks
+        shell: pwsh
+        run: |
+          $paths = @(
+            (Join-Path $HOME '.cargo/.package-cache'),
+            (Join-Path $HOME '.cargo/registry/index/index.crates.io-*/*.lock')
+          )
+          foreach ($path in $paths) {
+            Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Sync Unpatched Linux i686 Musl Build And Package
+        id: linux_i686
+        shell: pwsh
+        env:
+          FORCE_SYNC: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force == 'true') }}
+          UPSTREAM_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.upstream_ref || 'main' }}
+        run: |
+          $scriptArgs = @{
+            UpstreamRef = $env:UPSTREAM_REF
+          }
+          if ($env:FORCE_SYNC -eq "true") {
+            $scriptArgs.Force = $true
+          }
+          ./scripts/sync-codex-linux-i686-musl.ps1 @scriptArgs
+
+      - name: Save Linux i686 Cargo Cache
+        if: always() && steps.linux-i686-cargo-cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            out/codex-upstream-linux-i686/codex-rs/target
+          key: ${{ steps.linux-i686-cargo-cache-restore.outputs.cache-primary-key }}
+
+      - name: Upload Linux i686 Build Artifact
+        if: steps.linux_i686.outputs.changed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-linux-i686-musl-${{ steps.linux_i686.outputs.upstream_short_sha }}
+          path: |
+            ${{ steps.linux_i686.outputs.bundle_path }}
+            ${{ steps.linux_i686.outputs.manifest_path }}
+          if-no-files-found: error
+
+      - name: Publish Linux i686 Versioned Release
+        if: steps.linux_i686.outputs.changed == 'true'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REPO: ${{ github.repository }}
+          TARGET_COMMITISH: ${{ github.ref_name }}
+        run: |
+          $releaseName = "Codex Linux i686 musl ${{ steps.linux_i686.outputs.upstream_short_sha }}"
+          $files = @(
+            "${{ steps.linux_i686.outputs.bundle_path }}",
+            "${{ steps.linux_i686.outputs.manifest_path }}"
+          )
+          $body = @"
+          Linux i686 musl Codex build compiled from upstream OpenAI Codex without the Windows custom runtime patches.
+
+          Upstream repo: ${{ steps.linux_i686.outputs.upstream_repo }}
+          Upstream ref: ${{ steps.linux_i686.outputs.upstream_ref }}
+          Upstream SHA: ${{ steps.linux_i686.outputs.upstream_sha }}
+          Linux target: ${{ steps.linux_i686.outputs.linux_target }}
+          Version output: ${{ steps.linux_i686.outputs.version_output }}
+          Generated at: ${{ steps.linux_i686.outputs.generated_at }}
+
+          Package contents:
+          - codex
+          - certs/ca-certificates.crt
+          "@
+          ./scripts/publish-github-release.ps1 `
+            -Repo $env:RELEASE_REPO `
+            -TagName "${{ steps.linux_i686.outputs.release_tag }}" `
+            -ReleaseName $releaseName `
+            -Body $body `
+            -Files $files `
+            -TargetCommitish $env:TARGET_COMMITISH `
+            -Prerelease
+
+      - name: Publish Linux i686 Rolling Release
+        if: steps.linux_i686.outputs.changed == 'true'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REPO: ${{ github.repository }}
+          TARGET_COMMITISH: ${{ github.ref_name }}
+        run: |
+          $releaseName = "Latest Codex Linux i686 musl Build"
+          $files = @(
+            "${{ steps.linux_i686.outputs.bundle_path }}",
+            "${{ steps.linux_i686.outputs.manifest_path }}"
+          )
+          $body = @"
+          Rolling Linux i686 musl Codex build.
+
+          Upstream repo: ${{ steps.linux_i686.outputs.upstream_repo }}
+          Upstream ref: ${{ steps.linux_i686.outputs.upstream_ref }}
+          Upstream SHA: ${{ steps.linux_i686.outputs.upstream_sha }}
+          Linux target: ${{ steps.linux_i686.outputs.linux_target }}
+          Version output: ${{ steps.linux_i686.outputs.version_output }}
+          Generated at: ${{ steps.linux_i686.outputs.generated_at }}
+
+          Package contents:
+          - codex
+          - certs/ca-certificates.crt
+          "@
+          ./scripts/publish-github-release.ps1 `
+            -Repo $env:RELEASE_REPO `
+            -TagName "${{ steps.linux_i686.outputs.rolling_tag }}" `
+            -ReleaseName $releaseName `
+            -Body $body `
+            -Files $files `
+            -TargetCommitish $env:TARGET_COMMITISH `
+            -ClearExistingAssets `
+            -Prerelease
+
+      - name: Commit Linux i686 State Files
+        if: steps.linux_i686.outputs.changed == 'true'
+        shell: pwsh
+        env:
+          UPSTREAM_SHA: ${{ steps.linux_i686.outputs.upstream_sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/latest-linux-i686-musl-sha.txt state/latest-linux-i686-musl.json
+          if (git diff --cached --quiet) {
+            Write-Host "No Linux i686 state changes to commit."
+            exit 0
+          }
+          git commit -m "Sync Linux i686 Codex $env:UPSTREAM_SHA"
+          git pull --rebase origin $env:GITHUB_REF_NAME
           git -c http.extraheader="AUTHORIZATION: bearer $env:GITHUB_TOKEN" push origin HEAD:$env:GITHUB_REF_NAME
