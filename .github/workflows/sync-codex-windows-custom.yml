@@ -295,7 +295,7 @@ jobs:
           cargo install cargo-zigbuild --locked
           rustc --version
           cargo --version
-          cargo zigbuild --help | Select-Object -First 8
+          cargo zigbuild --help | head -n 8
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
