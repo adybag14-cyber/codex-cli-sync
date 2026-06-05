@@ -327,7 +327,7 @@ jobs:
             Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
           }
 
-      - name: Sync Unpatched Linux i686 Musl Build And Package
+      - name: Sync Linux i686 Musl Build And Package
         id: linux_i686
         shell: pwsh
         env:
@@ -378,6 +378,7 @@ jobs:
           )
           $body = @"
           Linux i686 musl Codex build compiled from upstream OpenAI Codex without the Windows custom runtime patches.
+          Compatibility: JavaScript code mode is disabled in this target package because rusty_v8 does not publish a prebuilt V8 archive for i686-unknown-linux-musl.
 
           Upstream repo: ${{ steps.linux_i686.outputs.upstream_repo }}
           Upstream ref: ${{ steps.linux_i686.outputs.upstream_ref }}
@@ -414,6 +415,7 @@ jobs:
           )
           $body = @"
           Rolling Linux i686 musl Codex build.
+          Compatibility: JavaScript code mode is disabled in this target package because rusty_v8 does not publish a prebuilt V8 archive for i686-unknown-linux-musl.
 
           Upstream repo: ${{ steps.linux_i686.outputs.upstream_repo }}
           Upstream ref: ${{ steps.linux_i686.outputs.upstream_ref }}

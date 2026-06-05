@@ -126,6 +126,384 @@ openssl-sys = { workspace = true, features = ["vendored"] }
     return $true
 }
 
+function Disable-I686MuslV8CodeMode {
+    param([Parameter(Mandatory = $true)][string]$CodexRsDir)
+
+    $codeModeDir = Join-Path $CodexRsDir "code-mode"
+    $cargoTomlPath = Join-Path $codeModeDir "Cargo.toml"
+    $runtimePath = Join-Path $codeModeDir "src/runtime/mod.rs"
+    $servicePath = Join-Path $codeModeDir "src/service.rs"
+
+    foreach ($requiredPath in @($cargoTomlPath, $runtimePath, $servicePath)) {
+        if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+            throw "Required code-mode file not found: $requiredPath"
+        }
+    }
+
+    $cargoToml = [System.IO.File]::ReadAllText($cargoTomlPath)
+    $cargoToml = $cargoToml -replace 'sandbox = \["v8/v8_enable_sandbox"\]', 'sandbox = []'
+    $cargoToml = $cargoToml -replace '(?m)^deno_core_icudata = \{ workspace = true \}\r?\n', ''
+    $cargoToml = $cargoToml -replace '(?m)^v8 = \{ workspace = true \}\r?\n', ''
+    [System.IO.File]::WriteAllText(
+        $cargoTomlPath,
+        $cargoToml,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    $runtimeSource = @'
+use codex_protocol::ToolName;
+use serde::Serialize;
+use serde_json::Value as JsonValue;
+
+use crate::description::CodeModeToolKind;
+use crate::description::ToolDefinition;
+use crate::response::FunctionCallOutputContentItem;
+use crate::service::CellId;
+
+pub const DEFAULT_EXEC_YIELD_TIME_MS: u64 = 10_000;
+pub const DEFAULT_WAIT_YIELD_TIME_MS: u64 = 10_000;
+pub const DEFAULT_MAX_OUTPUT_TOKENS_PER_EXEC_CALL: usize = 10_000;
+
+#[derive(Clone, Debug)]
+pub struct ExecuteRequest {
+    pub tool_call_id: String,
+    pub enabled_tools: Vec<ToolDefinition>,
+    pub source: String,
+    pub yield_time_ms: Option<u64>,
+    pub max_output_tokens: Option<usize>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WaitRequest {
+    pub cell_id: CellId,
+    pub yield_time_ms: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct WaitToPendingRequest {
+    pub cell_id: CellId,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum WaitOutcome {
+    LiveCell(RuntimeResponse),
+    MissingCell(RuntimeResponse),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ExecuteToPendingOutcome {
+    Pending {
+        cell_id: CellId,
+        content_items: Vec<FunctionCallOutputContentItem>,
+        pending_tool_call_ids: Vec<String>,
+    },
+    Completed(RuntimeResponse),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum WaitToPendingOutcome {
+    LiveCell(ExecuteToPendingOutcome),
+    MissingCell(RuntimeResponse),
+}
+
+impl From<WaitOutcome> for RuntimeResponse {
+    fn from(outcome: WaitOutcome) -> Self {
+        match outcome {
+            WaitOutcome::LiveCell(response) | WaitOutcome::MissingCell(response) => response,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub enum RuntimeResponse {
+    Yielded {
+        cell_id: CellId,
+        content_items: Vec<FunctionCallOutputContentItem>,
+    },
+    Terminated {
+        cell_id: CellId,
+        content_items: Vec<FunctionCallOutputContentItem>,
+    },
+    Result {
+        cell_id: CellId,
+        content_items: Vec<FunctionCallOutputContentItem>,
+        error_text: Option<String>,
+    },
+}
+
+#[derive(Debug)]
+pub struct CodeModeNestedToolCall {
+    pub cell_id: CellId,
+    pub runtime_tool_call_id: String,
+    pub tool_name: ToolName,
+    pub tool_kind: CodeModeToolKind,
+    pub input: Option<JsonValue>,
+}
+'@
+
+    $serviceSource = @'
+use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Value as JsonValue;
+use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
+
+use crate::FunctionCallOutputContentItem;
+use crate::runtime::CodeModeNestedToolCall;
+use crate::runtime::ExecuteRequest;
+use crate::runtime::RuntimeResponse;
+use crate::runtime::WaitOutcome;
+use crate::runtime::WaitRequest;
+
+const UNAVAILABLE: &str = "code mode is unavailable in this i686-unknown-linux-musl build because rusty_v8 does not publish a prebuilt V8 archive for this target";
+
+pub type CodeModeSessionResultFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
+pub type CodeModeSessionProviderFuture<'a> =
+    CodeModeSessionResultFuture<'a, Arc<dyn CodeModeSession>>;
+pub type ToolInvocationFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<JsonValue, String>> + Send + 'a>>;
+pub type NotificationFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct CellId(String);
+
+impl CellId {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for CellId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for CellId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+pub struct StartedCell {
+    pub cell_id: CellId,
+    initial_response_rx: oneshot::Receiver<RuntimeResponse>,
+}
+
+impl StartedCell {
+    fn ready(cell_id: CellId, response: RuntimeResponse) -> Self {
+        let (response_tx, initial_response_rx) = oneshot::channel();
+        let _ = response_tx.send(response);
+        Self {
+            cell_id,
+            initial_response_rx,
+        }
+    }
+
+    pub async fn initial_response(self) -> Result<RuntimeResponse, String> {
+        self.initial_response_rx
+            .await
+            .map_err(|_| "exec runtime ended unexpectedly".to_string())
+    }
+}
+
+pub trait CodeModeSessionDelegate: Send + Sync {
+    fn invoke_tool<'a>(
+        &'a self,
+        invocation: CodeModeNestedToolCall,
+        cancellation_token: CancellationToken,
+    ) -> ToolInvocationFuture<'a>;
+
+    fn notify<'a>(
+        &'a self,
+        call_id: String,
+        cell_id: CellId,
+        text: String,
+        cancellation_token: CancellationToken,
+    ) -> NotificationFuture<'a>;
+
+    fn cell_closed(&self, cell_id: &CellId);
+}
+
+pub struct NoopCodeModeSessionDelegate;
+
+impl CodeModeSessionDelegate for NoopCodeModeSessionDelegate {
+    fn invoke_tool<'a>(
+        &'a self,
+        _invocation: CodeModeNestedToolCall,
+        cancellation_token: CancellationToken,
+    ) -> ToolInvocationFuture<'a> {
+        Box::pin(async move {
+            cancellation_token.cancelled().await;
+            Err("code mode nested tools are unavailable".to_string())
+        })
+    }
+
+    fn notify<'a>(
+        &'a self,
+        _call_id: String,
+        _cell_id: CellId,
+        _text: String,
+        _cancellation_token: CancellationToken,
+    ) -> NotificationFuture<'a> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn cell_closed(&self, _cell_id: &CellId) {}
+}
+
+pub trait CodeModeSession: Send + Sync {
+    fn execute<'a>(
+        &'a self,
+        request: ExecuteRequest,
+    ) -> CodeModeSessionResultFuture<'a, StartedCell>;
+
+    fn wait<'a>(&'a self, request: WaitRequest) -> CodeModeSessionResultFuture<'a, WaitOutcome>;
+
+    fn terminate<'a>(&'a self, cell_id: CellId) -> CodeModeSessionResultFuture<'a, WaitOutcome>;
+
+    fn shutdown<'a>(&'a self) -> CodeModeSessionResultFuture<'a, ()>;
+}
+
+pub trait CodeModeSessionProvider: Send + Sync {
+    fn create_session<'a>(
+        &'a self,
+        delegate: Arc<dyn CodeModeSessionDelegate>,
+    ) -> CodeModeSessionProviderFuture<'a>;
+}
+
+#[derive(Default)]
+pub struct InProcessCodeModeSessionProvider;
+
+impl CodeModeSessionProvider for InProcessCodeModeSessionProvider {
+    fn create_session<'a>(
+        &'a self,
+        delegate: Arc<dyn CodeModeSessionDelegate>,
+    ) -> CodeModeSessionProviderFuture<'a> {
+        Box::pin(async move {
+            let session: Arc<dyn CodeModeSession> =
+                Arc::new(CodeModeService::with_delegate(delegate));
+            Ok(session)
+        })
+    }
+}
+
+pub struct CodeModeService {
+    next_cell_id: AtomicU64,
+    delegate: Arc<dyn CodeModeSessionDelegate>,
+}
+
+impl CodeModeService {
+    pub fn new() -> Self {
+        Self::with_delegate(Arc::new(NoopCodeModeSessionDelegate))
+    }
+
+    pub fn with_delegate(delegate: Arc<dyn CodeModeSessionDelegate>) -> Self {
+        Self {
+            next_cell_id: AtomicU64::new(1),
+            delegate,
+        }
+    }
+
+    pub async fn execute(&self, request: ExecuteRequest) -> Result<StartedCell, String> {
+        let cell_id = self.allocate_cell_id();
+        let response = unavailable_response(cell_id.clone(), request_summary(&request));
+        self.delegate.cell_closed(&cell_id);
+        Ok(StartedCell::ready(cell_id, response))
+    }
+
+    pub async fn wait(&self, request: WaitRequest) -> Result<WaitOutcome, String> {
+        let response = unavailable_response(request.cell_id, None);
+        Ok(WaitOutcome::MissingCell(response))
+    }
+
+    pub async fn terminate(&self, cell_id: CellId) -> Result<WaitOutcome, String> {
+        let response = unavailable_response(cell_id, None);
+        Ok(WaitOutcome::MissingCell(response))
+    }
+
+    pub async fn shutdown(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn allocate_cell_id(&self) -> CellId {
+        CellId::new(self.next_cell_id.fetch_add(1, Ordering::Relaxed).to_string())
+    }
+}
+
+impl Default for CodeModeService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CodeModeSession for CodeModeService {
+    fn execute<'a>(
+        &'a self,
+        request: ExecuteRequest,
+    ) -> CodeModeSessionResultFuture<'a, StartedCell> {
+        Box::pin(CodeModeService::execute(self, request))
+    }
+
+    fn wait<'a>(&'a self, request: WaitRequest) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
+        Box::pin(CodeModeService::wait(self, request))
+    }
+
+    fn terminate<'a>(&'a self, cell_id: CellId) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
+        Box::pin(CodeModeService::terminate(self, cell_id))
+    }
+
+    fn shutdown<'a>(&'a self) -> CodeModeSessionResultFuture<'a, ()> {
+        Box::pin(CodeModeService::shutdown(self))
+    }
+}
+
+fn unavailable_response(cell_id: CellId, request_summary: Option<String>) -> RuntimeResponse {
+    let mut content_items = Vec::new();
+    if let Some(summary) = request_summary {
+        content_items.push(FunctionCallOutputContentItem::InputText { text: summary });
+    }
+    RuntimeResponse::Result {
+        cell_id,
+        content_items,
+        error_text: Some(UNAVAILABLE.to_string()),
+    }
+}
+
+fn request_summary(request: &ExecuteRequest) -> Option<String> {
+    if request.source.trim().is_empty() {
+        return None;
+    }
+    Some("JavaScript code mode was requested, but this build does not include V8.".to_string())
+}
+'@
+
+    [System.IO.File]::WriteAllText(
+        $runtimePath,
+        $runtimeSource,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    [System.IO.File]::WriteAllText(
+        $servicePath,
+        $serviceSource,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    return $true
+}
+
 function Set-I686MuslBuildEnvironment {
     $env:OPENSSL_STATIC = "1"
     $env:AWS_LC_SYS_NO_JITTER_ENTROPY = "1"
@@ -235,11 +613,13 @@ if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
     Invoke-Git -WorkingDirectory $sourceDir -Args @("checkout", "--detach", "FETCH_HEAD")
 }
 
-$cliCargoTomlPath = Join-Path $sourceDir "codex-rs/cli/Cargo.toml"
+$codexRsDir = Join-Path $sourceDir "codex-rs"
+$cliCargoTomlPath = Join-Path $codexRsDir "cli/Cargo.toml"
 $addedVendoredOpenSsl = Enable-I686MuslVendoredOpenSsl -CargoTomlPath $cliCargoTomlPath
+$disabledV8CodeMode = Disable-I686MuslV8CodeMode -CodexRsDir $codexRsDir
 Set-I686MuslBuildEnvironment
 
-Push-Location (Join-Path $sourceDir "codex-rs")
+Push-Location $codexRsDir
 try {
     & rustup show active-toolchain
     if ($LASTEXITCODE -ne 0) {
@@ -321,6 +701,10 @@ Files:
 - codex
 - certs/ca-certificates.crt
 
+Compatibility note:
+  This i686 musl build does not include JavaScript code mode because rusty_v8
+  does not publish a prebuilt V8 archive for i686-unknown-linux-musl.
+
 Tiny Core example:
   install -m 755 codex /home/tc/codex
   mkdir -p /home/tc/certs /usr/local/etc/ssl/certs
@@ -343,8 +727,17 @@ $manifest = [ordered]@{
     release_tag                = $releaseTag
     rolling_tag                = $rollingTag
     custom_runtime_patches     = "not_applied"
+    compatibility_patches      = @(
+        [ordered]@{
+            name   = "disable_v8_code_mode_for_i686_musl"
+            applied = [bool]$disabledV8CodeMode
+            reason = "rusty_v8 v147.4.0 does not publish librusty_v8_release_i686-unknown-linux-musl.a.gz"
+            effect = "JavaScript code mode returns an unavailable error on this i686 musl package; standard Codex CLI behavior remains built from upstream source."
+        }
+    )
     build_adjustments          = [ordered]@{
         vendored_openssl_for_i686_musl = [bool]$addedVendoredOpenSsl
+        v8_code_mode_disabled_for_i686_musl = [bool]$disabledV8CodeMode
         ca_certificates_bundle_source  = $caCertPath
         cargo_command                  = "cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget"
     }
