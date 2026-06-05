@@ -724,6 +724,12 @@ try {
         throw "rustc could not resolve target libdir for $LinuxTarget."
     }
 
+    Write-Host "Clearing cached openssl-sys artifacts so i686 OpenSSL CFLAGS are applied."
+    cargo clean --package openssl-sys --target $LinuxTarget
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo clean for openssl-sys failed with exit code $LASTEXITCODE"
+    }
+
     cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
         throw "cargo zigbuild failed with exit code $LASTEXITCODE"
@@ -826,6 +832,7 @@ $manifest = [ordered]@{
         v8_code_mode_disabled_for_i686_musl = [bool]$disabledV8CodeMode
         linux_sandbox_syscalls_patched_for_i686_musl = [bool]$patchedLinuxSandboxSyscalls
         openssl_no_c11_atomics_for_i686_musl = $true
+        openssl_sys_cleaned_for_i686_musl = $true
         cargo_build_jobs              = $env:CARGO_BUILD_JOBS
         ca_certificates_bundle_source  = $caCertPath
         cargo_command                  = "cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget"
