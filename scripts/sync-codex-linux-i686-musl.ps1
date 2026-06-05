@@ -504,6 +504,71 @@ fn request_summary(request: &ExecuteRequest) -> Option<String> {
     return $true
 }
 
+function Enable-I686MuslLinuxSandboxSyscallBuild {
+    param([Parameter(Mandatory = $true)][string]$CodexRsDir)
+
+    $landlockPath = Join-Path $CodexRsDir "linux-sandbox/src/landlock.rs"
+    if (-not (Test-Path -LiteralPath $landlockPath -PathType Leaf)) {
+        throw "Required linux sandbox file not found: $landlockPath"
+    }
+
+    $text = [System.IO.File]::ReadAllText($landlockPath)
+    $originalText = $text
+
+    $text = $text.Replace(
+        @'
+    fn deny_syscall(rules: &mut BTreeMap<i64, Vec<SeccompRule>>, nr: i64) {
+        rules.insert(nr, vec![]); // empty rule vec = unconditional match
+    }
+'@,
+        @'
+    fn deny_syscall<T>(rules: &mut BTreeMap<i64, Vec<SeccompRule>>, nr: T)
+    where
+        T: Into<i64>,
+    {
+        rules.insert(nr.into(), vec![]); // empty rule vec = unconditional match
+    }
+'@
+    )
+
+    $text = $text.Replace(
+        "            deny_syscall(&mut rules, libc::SYS_accept);",
+        @'
+            #[cfg(not(all(target_arch = "x86", target_env = "musl")))]
+            deny_syscall(&mut rules, libc::SYS_accept);
+'@
+    )
+
+    $text = $text.Replace(
+        "            rules.insert(libc::SYS_socket, vec![unix_only_rule.clone()]);",
+        "            rules.insert(libc::SYS_socket.into(), vec![unix_only_rule.clone()]);"
+    )
+    $text = $text.Replace(
+        "            rules.insert(libc::SYS_socketpair, vec![unix_only_rule]);",
+        "            rules.insert(libc::SYS_socketpair.into(), vec![unix_only_rule]);"
+    )
+    $text = $text.Replace(
+        "            rules.insert(libc::SYS_socket, vec![deny_non_ip_socket]);",
+        "            rules.insert(libc::SYS_socket.into(), vec![deny_non_ip_socket]);"
+    )
+    $text = $text.Replace(
+        "            rules.insert(libc::SYS_socketpair, vec![deny_unix_socketpair]);",
+        "            rules.insert(libc::SYS_socketpair.into(), vec![deny_unix_socketpair]);"
+    )
+
+    if ($text -eq $originalText) {
+        throw "Linux sandbox syscall compatibility patch did not change $landlockPath"
+    }
+
+    [System.IO.File]::WriteAllText(
+        $landlockPath,
+        $text,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    return $true
+}
+
 function Set-I686MuslBuildEnvironment {
     $env:OPENSSL_STATIC = "1"
     $env:AWS_LC_SYS_NO_JITTER_ENTROPY = "1"
@@ -617,6 +682,7 @@ $codexRsDir = Join-Path $sourceDir "codex-rs"
 $cliCargoTomlPath = Join-Path $codexRsDir "cli/Cargo.toml"
 $addedVendoredOpenSsl = Enable-I686MuslVendoredOpenSsl -CargoTomlPath $cliCargoTomlPath
 $disabledV8CodeMode = Disable-I686MuslV8CodeMode -CodexRsDir $codexRsDir
+$patchedLinuxSandboxSyscalls = Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $codexRsDir
 Set-I686MuslBuildEnvironment
 
 Push-Location $codexRsDir
@@ -733,11 +799,18 @@ $manifest = [ordered]@{
             applied = [bool]$disabledV8CodeMode
             reason = "rusty_v8 v147.4.0 does not publish librusty_v8_release_i686-unknown-linux-musl.a.gz"
             effect = "JavaScript code mode returns an unavailable error on this i686 musl package; standard Codex CLI behavior remains built from upstream source."
+        },
+        [ordered]@{
+            name   = "i686_musl_linux_sandbox_syscall_compile_fix"
+            applied = [bool]$patchedLinuxSandboxSyscalls
+            reason = "libc syscall constants are i32 on i686 musl and libc does not expose SYS_accept for this target."
+            effect = "Linux sandbox syscall table code compiles for the i686 musl release target."
         }
     )
     build_adjustments          = [ordered]@{
         vendored_openssl_for_i686_musl = [bool]$addedVendoredOpenSsl
         v8_code_mode_disabled_for_i686_musl = [bool]$disabledV8CodeMode
+        linux_sandbox_syscalls_patched_for_i686_musl = [bool]$patchedLinuxSandboxSyscalls
         ca_certificates_bundle_source  = $caCertPath
         cargo_command                  = "cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget"
     }
