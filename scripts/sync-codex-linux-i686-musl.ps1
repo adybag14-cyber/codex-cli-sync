@@ -52,6 +52,10 @@ function Get-UpstreamHead {
         [Parameter(Mandatory = $true)][string]$Ref
     )
 
+    if ($Ref -match '^[0-9a-fA-F]{40}$') {
+        return $Ref.ToLowerInvariant()
+    }
+
     $remote = "https://github.com/$Repo.git"
     $candidates = @(
         "refs/heads/$Ref",
