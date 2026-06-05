@@ -239,26 +239,31 @@ $cliCargoTomlPath = Join-Path $sourceDir "codex-rs/cli/Cargo.toml"
 $addedVendoredOpenSsl = Enable-I686MuslVendoredOpenSsl -CargoTomlPath $cliCargoTomlPath
 Set-I686MuslBuildEnvironment
 
-& rustup target add $LinuxTarget
-if ($LASTEXITCODE -ne 0) {
-    throw "rustup target add $LinuxTarget failed with exit code $LASTEXITCODE"
-}
-
-$installedTargets = @(& rustup target list --installed)
-if ($LASTEXITCODE -ne 0) {
-    throw "rustup target list --installed failed with exit code $LASTEXITCODE"
-}
-if ($installedTargets -notcontains $LinuxTarget) {
-    throw "Rust target $LinuxTarget is not installed after rustup target add."
-}
-
-& rustc --print target-libdir --target $LinuxTarget
-if ($LASTEXITCODE -ne 0) {
-    throw "rustc could not resolve target libdir for $LinuxTarget."
-}
-
 Push-Location (Join-Path $sourceDir "codex-rs")
 try {
+    & rustup show active-toolchain
+    if ($LASTEXITCODE -ne 0) {
+        throw "rustup show active-toolchain failed with exit code $LASTEXITCODE"
+    }
+
+    & rustup target add $LinuxTarget
+    if ($LASTEXITCODE -ne 0) {
+        throw "rustup target add $LinuxTarget failed with exit code $LASTEXITCODE"
+    }
+
+    $installedTargets = @(& rustup target list --installed)
+    if ($LASTEXITCODE -ne 0) {
+        throw "rustup target list --installed failed with exit code $LASTEXITCODE"
+    }
+    if ($installedTargets -notcontains $LinuxTarget) {
+        throw "Rust target $LinuxTarget is not installed after rustup target add."
+    }
+
+    & rustc --print target-libdir --target $LinuxTarget
+    if ($LASTEXITCODE -ne 0) {
+        throw "rustc could not resolve target libdir for $LinuxTarget."
+    }
+
     cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
         throw "cargo zigbuild failed with exit code $LASTEXITCODE"
