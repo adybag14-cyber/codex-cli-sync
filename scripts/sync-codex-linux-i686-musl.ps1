@@ -555,6 +555,10 @@ function Enable-I686MuslLinuxSandboxSyscallBuild {
         "            rules.insert(libc::SYS_socketpair, vec![deny_unix_socketpair]);",
         "            rules.insert(libc::SYS_socketpair.into(), vec![deny_unix_socketpair]);"
     )
+    $text = $text.Replace(
+        "            rules.insert(libc::SYS_socketpair, vec![deny_non_unix_socketpair]);",
+        "            rules.insert(libc::SYS_socketpair.into(), vec![deny_non_unix_socketpair]);"
+    )
 
     if ($text -eq $originalText) {
         throw "Linux sandbox syscall compatibility patch did not change $landlockPath"
