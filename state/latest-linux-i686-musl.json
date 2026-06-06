@@ -1,0 +1,71 @@
+{
+  "upstream_repo": "openai/codex",
+  "upstream_ref": "da490ba9de80bf83ad04f8db4cf72b793e99967f",
+  "upstream_sha": "da490ba9de80bf83ad04f8db4cf72b793e99967f",
+  "linux_target": "i686-unknown-linux-musl",
+  "generated_at_utc": "2026-06-05T23:30:13.9057312Z",
+  "release_tag": "linux-i686-musl-da490ba9de80",
+  "rolling_tag": "latest-linux-i686-musl",
+  "custom_runtime_patches": "not_applied",
+  "compatibility_patches": [
+    {
+      "name": "disable_v8_code_mode_for_i686_musl",
+      "applied": true,
+      "reason": "rusty_v8 v147.4.0 does not publish librusty_v8_release_i686-unknown-linux-musl.a.gz",
+      "effect": "JavaScript code mode returns an unavailable error on this i686 musl package; standard Codex CLI behavior remains built from upstream source."
+    },
+    {
+      "name": "i686_musl_linux_sandbox_syscall_compile_fix",
+      "applied": true,
+      "reason": "libc syscall constants are i32 on i686 musl and libc does not expose SYS_accept for this target.",
+      "effect": "Linux sandbox syscall table code compiles for the i686 musl release target."
+    }
+  ],
+  "build_adjustments": {
+    "vendored_openssl_for_i686_musl": true,
+    "v8_code_mode_disabled_for_i686_musl": true,
+    "linux_sandbox_syscalls_patched_for_i686_musl": true,
+    "openssl_no_c11_atomics_for_i686_musl": true,
+    "openssl_broken_clang_atomics_for_i686_musl": true,
+    "openssl_sys_cleaned_for_i686_musl": true,
+    "cargo_build_jobs": "2",
+    "ca_certificates_bundle_source": "/etc/ssl/certs/ca-certificates.crt",
+    "cargo_command": "cargo zigbuild --release --package codex-cli --bin codex --target i686-unknown-linux-musl"
+  },
+  "verification": {
+    "version_output": "codex-cli 0.0.0",
+    "file_output": "/home/runner/work/codex-cli-sync/codex-cli-sync/out/codex-upstream-linux-i686/codex-rs/target/i686-unknown-linux-musl/release/codex: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), statically linked, stripped"
+  },
+  "artifact": {
+    "name": "codex-linux-i686-musl-da490ba9de80.tar.gz",
+    "sha256": "a0faaaa24929d7b83d7bb58651e7b05bbfbcd752d6ef1cd1930b3d91fc2d28d2"
+  },
+  "packaged_files": [
+    {
+      "path": "codex",
+      "sha256": "42afbb7fb287cdb41b97a5329eec31656963804d23a3ad6e7fc45c7f99ee54d3"
+    },
+    {
+      "path": "certs/ca-certificates.crt",
+      "sha256": "6d84ab71cb726c0641b0af84303c316e3fa50db941dc8507d09045eb2fa5d238"
+    },
+    {
+      "path": "VERSION.txt",
+      "sha256": "bb3d8f012305c09810289fd57dcc9ec4a484b86fec422e6f949ff3790122cda8"
+    },
+    {
+      "path": "README.TINYCORE.txt",
+      "sha256": "99ecdd57458b5e0d8fdf4f51b0dcf53541e666279a906afb0cb3a002d0ede18e"
+    }
+  ],
+  "release_files": [
+    {
+      "name": "codex-linux-i686-musl-da490ba9de80.tar.gz",
+      "sha256": "a0faaaa24929d7b83d7bb58651e7b05bbfbcd752d6ef1cd1930b3d91fc2d28d2"
+    },
+    {
+      "name": "codex-linux-i686-musl-da490ba9de80.manifest.json",
+      "sha256": null
+    }
+  ]
+}
