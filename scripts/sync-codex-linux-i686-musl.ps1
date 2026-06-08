@@ -126,6 +126,38 @@ openssl-sys = { workspace = true, features = ["vendored"] }
     return $true
 }
 
+function Enable-I686MuslBlake3PureFeature {
+    param([Parameter(Mandatory = $true)][string]$CargoTomlPath)
+
+    $text = [System.IO.File]::ReadAllText($CargoTomlPath)
+    $sectionPattern = '(?ms)^\[target\.i686-unknown-linux-musl\.dependencies\]\r?\n.*?(?=^\[|\z)'
+    $entryPattern = '(?m)^\s*blake3\s*='
+    $dependencyLine = 'blake3 = { version = "1", features = ["pure"] }'
+    $sectionMatch = [regex]::Match($text, $sectionPattern)
+
+    if ($sectionMatch.Success) {
+        if ($sectionMatch.Value -match $entryPattern) {
+            return $false
+        }
+
+        $section = $sectionMatch.Value.TrimEnd("`r", "`n")
+        $replacement = $section + [Environment]::NewLine + $dependencyLine + [Environment]::NewLine
+        $text = $text.Substring(0, $sectionMatch.Index) + $replacement + $text.Substring($sectionMatch.Index + $sectionMatch.Length)
+    } else {
+        $addition = [Environment]::NewLine + [Environment]::NewLine +
+            '# Force pure Rust BLAKE3 for 32-bit musl builds; zig clang rejects the AVX512 C path for i686.' + [Environment]::NewLine +
+            '[target.i686-unknown-linux-musl.dependencies]' + [Environment]::NewLine +
+            $dependencyLine + [Environment]::NewLine
+        $text = $text.TrimEnd() + $addition
+    }
+
+    [System.IO.File]::WriteAllText(
+        $CargoTomlPath,
+        $text,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    return $true
+}
 function Disable-I686MuslV8CodeMode {
     param([Parameter(Mandatory = $true)][string]$CodexRsDir)
 
@@ -697,6 +729,7 @@ if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
 $codexRsDir = Join-Path $sourceDir "codex-rs"
 $cliCargoTomlPath = Join-Path $codexRsDir "cli/Cargo.toml"
 $addedVendoredOpenSsl = Enable-I686MuslVendoredOpenSsl -CargoTomlPath $cliCargoTomlPath
+$enabledBlake3Pure = Enable-I686MuslBlake3PureFeature -CargoTomlPath $cliCargoTomlPath
 $disabledV8CodeMode = Disable-I686MuslV8CodeMode -CodexRsDir $codexRsDir
 $patchedLinuxSandboxSyscalls = Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $codexRsDir
 Set-I686MuslBuildEnvironment
@@ -829,10 +862,17 @@ $manifest = [ordered]@{
             applied = [bool]$patchedLinuxSandboxSyscalls
             reason = "libc syscall constants are i32 on i686 musl and libc does not expose SYS_accept for this target."
             effect = "Linux sandbox syscall table code compiles for the i686 musl release target."
+        },
+        [ordered]@{
+            name   = "i686_musl_blake3_pure_compile_fix"
+            applied = [bool]$enabledBlake3Pure
+            reason = "blake3 compiles AVX512 C intrinsics on 32-bit x86 by default, and zig clang rejects that path for i686 musl."
+            effect = "blake3 uses its pure Rust fallback for this target so the i686 musl release can compile."
         }
     )
     build_adjustments          = [ordered]@{
         vendored_openssl_for_i686_musl = [bool]$addedVendoredOpenSsl
+        blake3_pure_for_i686_musl = [bool]$enabledBlake3Pure
         v8_code_mode_disabled_for_i686_musl = [bool]$disabledV8CodeMode
         linux_sandbox_syscalls_patched_for_i686_musl = [bool]$patchedLinuxSandboxSyscalls
         openssl_no_c11_atomics_for_i686_musl = $true

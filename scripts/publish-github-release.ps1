@@ -42,6 +42,76 @@ function Get-GitHubHeaders {
     }
 }
 
+function Get-GitHubErrorStatusCode {
+    param([Parameter(Mandatory = $true)][object]$ErrorRecord)
+
+    try {
+        $response = $ErrorRecord.Exception.Response
+        if ($null -ne $response -and $null -ne $response.StatusCode) {
+            return [int]$response.StatusCode
+        }
+    } catch {
+        return $null
+    }
+
+    return $null
+}
+
+function Test-GitHubTransientError {
+    param([Parameter(Mandatory = $true)][object]$ErrorRecord)
+
+    $statusCode = Get-GitHubErrorStatusCode -ErrorRecord $ErrorRecord
+    if ($null -eq $statusCode) {
+        return $true
+    }
+
+    return ($statusCode -eq 409 -or $statusCode -eq 429 -or $statusCode -ge 500)
+}
+
+function Get-GitHubRetryDelaySeconds {
+    param(
+        [Parameter(Mandatory = $true)][object]$ErrorRecord,
+        [Parameter(Mandatory = $true)][int]$Attempt
+    )
+
+    try {
+        $retryAfter = $ErrorRecord.Exception.Response.Headers.RetryAfter
+        if ($null -ne $retryAfter -and $null -ne $retryAfter.Delta) {
+            $seconds = [int][Math]::Ceiling($retryAfter.Delta.TotalSeconds)
+            if ($seconds -gt 0) {
+                return [Math]::Min(120, $seconds)
+            }
+        }
+    } catch {
+        # Fall back to exponential backoff.
+    }
+
+    return [Math]::Min(60, [int][Math]::Pow(2, $Attempt))
+}
+
+function Invoke-WithGitHubRetry {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$Operation,
+        [Parameter(Mandatory = $true)][string]$Description,
+        [int]$MaxAttempts = 5
+    )
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            return & $Operation
+        } catch {
+            if ($attempt -lt $MaxAttempts -and (Test-GitHubTransientError -ErrorRecord $_)) {
+                $statusCode = Get-GitHubErrorStatusCode -ErrorRecord $_
+                $delaySeconds = Get-GitHubRetryDelaySeconds -ErrorRecord $_ -Attempt $attempt
+                Write-Warning "$Description failed on attempt $attempt/$MaxAttempts with HTTP $statusCode. Retrying in $delaySeconds seconds."
+                Start-Sleep -Seconds $delaySeconds
+                continue
+            }
+
+            throw
+        }
+    }
+}
 function Invoke-GitHubJson {
     param(
         [Parameter(Mandatory = $true)]
@@ -57,12 +127,14 @@ function Invoke-GitHubJson {
     $headers = Get-GitHubHeaders
 
     try {
-        if ($null -ne $Payload) {
-            $json = $Payload | ConvertTo-Json -Depth 10
-            return Invoke-RestMethod -Method $Method -Uri $Uri -Headers $headers -ContentType "application/json" -Body $json
-        }
+        return Invoke-WithGitHubRetry -Description "$Method $Uri" -Operation {
+            if ($null -ne $Payload) {
+                $json = $Payload | ConvertTo-Json -Depth 10
+                return Invoke-RestMethod -Method $Method -Uri $Uri -Headers $headers -ContentType "application/json" -Body $json
+            }
 
-        return Invoke-RestMethod -Method $Method -Uri $Uri -Headers $headers
+            return Invoke-RestMethod -Method $Method -Uri $Uri -Headers $headers
+        }
     } catch {
         $response = $_.Exception.Response
         if ($AllowNotFound -and $null -ne $response -and $response.StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
@@ -194,7 +266,9 @@ function Upload-ReleaseAsset {
     $contentType = Get-UploadContentType -Path $Path
 
     Write-Host "Uploading $assetName"
-    Invoke-RestMethod -Method "POST" -Uri $uploadUri -Headers $headers -ContentType $contentType -InFile $Path | Out-Null
+    Invoke-WithGitHubRetry -Description "Upload release asset $assetName" -Operation {
+        Invoke-RestMethod -Method "POST" -Uri $uploadUri -Headers $headers -ContentType $contentType -InFile $Path | Out-Null
+    }
 }
 
 $release = New-OrUpdateRelease `
