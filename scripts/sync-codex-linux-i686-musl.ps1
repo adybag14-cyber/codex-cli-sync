@@ -183,191 +183,38 @@ function Disable-I686MuslV8CodeMode {
     )
 
     $runtimeSource = @'
-use codex_protocol::ToolName;
-use serde::Serialize;
-use serde_json::Value as JsonValue;
-
-use crate::description::CodeModeToolKind;
-use crate::description::ToolDefinition;
-use crate::response::FunctionCallOutputContentItem;
-use crate::service::CellId;
-
-pub const DEFAULT_EXEC_YIELD_TIME_MS: u64 = 10_000;
-pub const DEFAULT_WAIT_YIELD_TIME_MS: u64 = 10_000;
-pub const DEFAULT_MAX_OUTPUT_TOKENS_PER_EXEC_CALL: usize = 10_000;
-
-#[derive(Clone, Debug)]
-pub struct ExecuteRequest {
-    pub tool_call_id: String,
-    pub enabled_tools: Vec<ToolDefinition>,
-    pub source: String,
-    pub yield_time_ms: Option<u64>,
-    pub max_output_tokens: Option<usize>,
-}
-
-#[derive(Clone, Debug)]
-pub struct WaitRequest {
-    pub cell_id: CellId,
-    pub yield_time_ms: u64,
-}
-
-#[derive(Clone, Debug)]
-pub struct WaitToPendingRequest {
-    pub cell_id: CellId,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum WaitOutcome {
-    LiveCell(RuntimeResponse),
-    MissingCell(RuntimeResponse),
-}
-
-#[derive(Debug, PartialEq)]
-pub enum ExecuteToPendingOutcome {
-    Pending {
-        cell_id: CellId,
-        content_items: Vec<FunctionCallOutputContentItem>,
-        pending_tool_call_ids: Vec<String>,
-    },
-    Completed(RuntimeResponse),
-}
-
-#[derive(Debug, PartialEq)]
-pub enum WaitToPendingOutcome {
-    LiveCell(ExecuteToPendingOutcome),
-    MissingCell(RuntimeResponse),
-}
-
-impl From<WaitOutcome> for RuntimeResponse {
-    fn from(outcome: WaitOutcome) -> Self {
-        match outcome {
-            WaitOutcome::LiveCell(response) | WaitOutcome::MissingCell(response) => response,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Serialize)]
-pub enum RuntimeResponse {
-    Yielded {
-        cell_id: CellId,
-        content_items: Vec<FunctionCallOutputContentItem>,
-    },
-    Terminated {
-        cell_id: CellId,
-        content_items: Vec<FunctionCallOutputContentItem>,
-    },
-    Result {
-        cell_id: CellId,
-        content_items: Vec<FunctionCallOutputContentItem>,
-        error_text: Option<String>,
-    },
-}
-
-#[derive(Debug)]
-pub struct CodeModeNestedToolCall {
-    pub cell_id: CellId,
-    pub runtime_tool_call_id: String,
-    pub tool_name: ToolName,
-    pub tool_kind: CodeModeToolKind,
-    pub input: Option<JsonValue>,
-}
+pub use codex_code_mode_protocol::{
+    CodeModeNestedToolCall, DEFAULT_EXEC_YIELD_TIME_MS, DEFAULT_MAX_OUTPUT_TOKENS_PER_EXEC_CALL,
+    DEFAULT_WAIT_YIELD_TIME_MS, ExecuteRequest, ExecuteToPendingOutcome, RuntimeResponse,
+    WaitOutcome, WaitRequest, WaitToPendingOutcome, WaitToPendingRequest,
+};
 '@
 
     $serviceSource = @'
-use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
-use serde::Deserialize;
-use serde::Serialize;
+use codex_code_mode_protocol::CellId;
+use codex_code_mode_protocol::CodeModeNestedToolCall;
+use codex_code_mode_protocol::CodeModeSession;
+use codex_code_mode_protocol::CodeModeSessionDelegate;
+use codex_code_mode_protocol::CodeModeSessionProvider;
+use codex_code_mode_protocol::CodeModeSessionProviderFuture;
+use codex_code_mode_protocol::CodeModeSessionResultFuture;
+use codex_code_mode_protocol::ExecuteRequest;
+use codex_code_mode_protocol::FunctionCallOutputContentItem;
+use codex_code_mode_protocol::NotificationFuture;
+use codex_code_mode_protocol::RuntimeResponse;
+use codex_code_mode_protocol::StartedCell;
+use codex_code_mode_protocol::ToolInvocationFuture;
+use codex_code_mode_protocol::WaitOutcome;
+use codex_code_mode_protocol::WaitRequest;
 use serde_json::Value as JsonValue;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use crate::FunctionCallOutputContentItem;
-use crate::runtime::CodeModeNestedToolCall;
-use crate::runtime::ExecuteRequest;
-use crate::runtime::RuntimeResponse;
-use crate::runtime::WaitOutcome;
-use crate::runtime::WaitRequest;
-
 const UNAVAILABLE: &str = "code mode is unavailable in this i686-unknown-linux-musl build because rusty_v8 does not publish a prebuilt V8 archive for this target";
-
-pub type CodeModeSessionResultFuture<'a, T> =
-    Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
-pub type CodeModeSessionProviderFuture<'a> =
-    CodeModeSessionResultFuture<'a, Arc<dyn CodeModeSession>>;
-pub type ToolInvocationFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<JsonValue, String>> + Send + 'a>>;
-pub type NotificationFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
-
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub struct CellId(String);
-
-impl CellId {
-    pub fn new(value: String) -> Self {
-        Self(value)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl AsRef<str> for CellId {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-
-impl fmt::Display for CellId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-pub struct StartedCell {
-    pub cell_id: CellId,
-    initial_response_rx: oneshot::Receiver<RuntimeResponse>,
-}
-
-impl StartedCell {
-    fn ready(cell_id: CellId, response: RuntimeResponse) -> Self {
-        let (response_tx, initial_response_rx) = oneshot::channel();
-        let _ = response_tx.send(response);
-        Self {
-            cell_id,
-            initial_response_rx,
-        }
-    }
-
-    pub async fn initial_response(self) -> Result<RuntimeResponse, String> {
-        self.initial_response_rx
-            .await
-            .map_err(|_| "exec runtime ended unexpectedly".to_string())
-    }
-}
-
-pub trait CodeModeSessionDelegate: Send + Sync {
-    fn invoke_tool<'a>(
-        &'a self,
-        invocation: CodeModeNestedToolCall,
-        cancellation_token: CancellationToken,
-    ) -> ToolInvocationFuture<'a>;
-
-    fn notify<'a>(
-        &'a self,
-        call_id: String,
-        cell_id: CellId,
-        text: String,
-        cancellation_token: CancellationToken,
-    ) -> NotificationFuture<'a>;
-
-    fn cell_closed(&self, cell_id: &CellId);
-}
 
 pub struct NoopCodeModeSessionDelegate;
 
@@ -394,26 +241,6 @@ impl CodeModeSessionDelegate for NoopCodeModeSessionDelegate {
     }
 
     fn cell_closed(&self, _cell_id: &CellId) {}
-}
-
-pub trait CodeModeSession: Send + Sync {
-    fn execute<'a>(
-        &'a self,
-        request: ExecuteRequest,
-    ) -> CodeModeSessionResultFuture<'a, StartedCell>;
-
-    fn wait<'a>(&'a self, request: WaitRequest) -> CodeModeSessionResultFuture<'a, WaitOutcome>;
-
-    fn terminate<'a>(&'a self, cell_id: CellId) -> CodeModeSessionResultFuture<'a, WaitOutcome>;
-
-    fn shutdown<'a>(&'a self) -> CodeModeSessionResultFuture<'a, ()>;
-}
-
-pub trait CodeModeSessionProvider: Send + Sync {
-    fn create_session<'a>(
-        &'a self,
-        delegate: Arc<dyn CodeModeSessionDelegate>,
-    ) -> CodeModeSessionProviderFuture<'a>;
 }
 
 #[derive(Default)]
@@ -453,7 +280,9 @@ impl CodeModeService {
         let cell_id = self.allocate_cell_id();
         let response = unavailable_response(cell_id.clone(), request_summary(&request));
         self.delegate.cell_closed(&cell_id);
-        Ok(StartedCell::ready(cell_id, response))
+        let (response_tx, response_rx) = oneshot::channel();
+        let _ = response_tx.send(response);
+        Ok(StartedCell::new(cell_id, response_rx))
     }
 
     pub async fn wait(&self, request: WaitRequest) -> Result<WaitOutcome, String> {
@@ -482,6 +311,10 @@ impl Default for CodeModeService {
 }
 
 impl CodeModeSession for CodeModeService {
+    fn is_alive(&self) -> bool {
+        true
+    }
+
     fn execute<'a>(
         &'a self,
         request: ExecuteRequest,
