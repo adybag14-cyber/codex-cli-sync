@@ -162,32 +162,66 @@ function Disable-I686MuslV8CodeMode {
     param([Parameter(Mandatory = $true)][string]$CodexRsDir)
 
     $codeModeDir = Join-Path $CodexRsDir "code-mode"
+    $srcDir = Join-Path $codeModeDir "src"
     $cargoTomlPath = Join-Path $codeModeDir "Cargo.toml"
-    $runtimePath = Join-Path $codeModeDir "src/runtime/mod.rs"
-    $servicePath = Join-Path $codeModeDir "src/service.rs"
 
-    foreach ($requiredPath in @($cargoTomlPath, $runtimePath, $servicePath)) {
-        if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
-            throw "Required code-mode file not found: $requiredPath"
-        }
+    if (-not (Test-Path -LiteralPath $cargoTomlPath -PathType Leaf)) {
+        throw "Required code-mode file not found: $cargoTomlPath"
+    }
+    if (-not (Test-Path -LiteralPath $srcDir -PathType Container)) {
+        throw "Required code-mode src dir not found: $srcDir"
     }
 
+    # Drop V8/deno deps — rusty_v8 has no i686-unknown-linux-musl prebuilds.
     $cargoToml = [System.IO.File]::ReadAllText($cargoTomlPath)
     $cargoToml = $cargoToml -replace 'sandbox = \["v8/v8_enable_sandbox"\]', 'sandbox = []'
     $cargoToml = $cargoToml -replace '(?m)^deno_core_icudata = \{ workspace = true \}\r?\n', ''
     $cargoToml = $cargoToml -replace '(?m)^v8 = \{ workspace = true \}\r?\n', ''
+    # Full runtime path only; stub does not need codex-protocol.
+    $cargoToml = $cargoToml -replace '(?m)^codex-protocol = \{ workspace = true \}\r?\n', ''
     [System.IO.File]::WriteAllText(
         $cargoTomlPath,
         $cargoToml,
         [System.Text.UTF8Encoding]::new($false)
     )
 
-    $runtimeSource = @'
-pub use codex_code_mode_protocol::{
-    CodeModeNestedToolCall, DEFAULT_EXEC_YIELD_TIME_MS, DEFAULT_MAX_OUTPUT_TOKENS_PER_EXEC_CALL,
-    DEFAULT_WAIT_YIELD_TIME_MS, ExecuteRequest, ExecuteToPendingOutcome, RuntimeResponse,
-    WaitOutcome, WaitRequest, WaitToPendingOutcome, WaitToPendingRequest,
-};
+    # Replace the whole source tree with a compile-only stub that preserves the
+    # public API used by codex-core / code-mode-host (InProcess + ProcessOwned
+    # providers/sessions, V8 init shims). Real JS execution is unavailable.
+    if (Test-Path -LiteralPath $srcDir) {
+        Remove-Item -LiteralPath $srcDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $srcDir | Out-Null
+
+    $utf8 = [System.Text.UTF8Encoding]::new($false)
+
+    $libSource = @'
+pub use codex_code_mode_protocol::*;
+pub use remote_session::ProcessOwnedCodeModeSession;
+pub use remote_session::ProcessOwnedCodeModeSessionProvider;
+pub use service::InProcessCodeModeSession;
+pub use service::InProcessCodeModeSessionProvider;
+pub use service::NoopCodeModeSessionDelegate;
+pub use v8_init::V8JitMode;
+pub use v8_init::initialize_v8;
+
+mod remote_session;
+mod service;
+mod v8_init;
+'@
+
+    $v8InitSource = @'
+/// JIT mode selector kept for API compatibility with the full V8 build.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum V8JitMode {
+    Enabled,
+    Disabled,
+}
+
+/// No-op on i686 musl: JavaScript code mode is intentionally unavailable.
+pub fn initialize_v8(_jit_mode: V8JitMode) -> Result<(), String> {
+    Ok(())
+}
 '@
 
     $serviceSource = @'
@@ -203,6 +237,7 @@ use codex_code_mode_protocol::CodeModeSessionProvider;
 use codex_code_mode_protocol::CodeModeSessionProviderFuture;
 use codex_code_mode_protocol::CodeModeSessionResultFuture;
 use codex_code_mode_protocol::ExecuteRequest;
+use codex_code_mode_protocol::ExecuteToPendingOutcome;
 use codex_code_mode_protocol::FunctionCallOutputContentItem;
 use codex_code_mode_protocol::NotificationFuture;
 use codex_code_mode_protocol::RuntimeResponse;
@@ -210,7 +245,8 @@ use codex_code_mode_protocol::StartedCell;
 use codex_code_mode_protocol::ToolInvocationFuture;
 use codex_code_mode_protocol::WaitOutcome;
 use codex_code_mode_protocol::WaitRequest;
-use serde_json::Value as JsonValue;
+use codex_code_mode_protocol::WaitToPendingOutcome;
+use codex_code_mode_protocol::WaitToPendingRequest;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
@@ -253,18 +289,18 @@ impl CodeModeSessionProvider for InProcessCodeModeSessionProvider {
     ) -> CodeModeSessionProviderFuture<'a> {
         Box::pin(async move {
             let session: Arc<dyn CodeModeSession> =
-                Arc::new(CodeModeService::with_delegate(delegate));
+                Arc::new(InProcessCodeModeSession::with_delegate(delegate));
             Ok(session)
         })
     }
 }
 
-pub struct CodeModeService {
+pub struct InProcessCodeModeSession {
     next_cell_id: AtomicU64,
     delegate: Arc<dyn CodeModeSessionDelegate>,
 }
 
-impl CodeModeService {
+impl InProcessCodeModeSession {
     pub fn new() -> Self {
         Self::with_delegate(Arc::new(NoopCodeModeSessionDelegate))
     }
@@ -276,6 +312,13 @@ impl CodeModeService {
         }
     }
 
+    pub fn with_delegate_and_task_failure_handler(
+        delegate: Arc<dyn CodeModeSessionDelegate>,
+        _task_failure_handler: Arc<dyn Fn(String) + Send + Sync>,
+    ) -> Self {
+        Self::with_delegate(delegate)
+    }
+
     pub async fn execute(&self, request: ExecuteRequest) -> Result<StartedCell, String> {
         let cell_id = self.allocate_cell_id();
         let response = unavailable_response(cell_id.clone(), request_summary(&request));
@@ -283,6 +326,16 @@ impl CodeModeService {
         let (response_tx, response_rx) = oneshot::channel();
         let _ = response_tx.send(response);
         Ok(StartedCell::new(cell_id, response_rx))
+    }
+
+    pub async fn execute_to_pending(
+        &self,
+        request: ExecuteRequest,
+    ) -> Result<ExecuteToPendingOutcome, String> {
+        let cell_id = self.allocate_cell_id();
+        let response = unavailable_response(cell_id.clone(), request_summary(&request));
+        self.delegate.cell_closed(&cell_id);
+        Ok(ExecuteToPendingOutcome::Completed(response))
     }
 
     pub async fn wait(&self, request: WaitRequest) -> Result<WaitOutcome, String> {
@@ -295,6 +348,14 @@ impl CodeModeService {
         Ok(WaitOutcome::MissingCell(response))
     }
 
+    pub async fn wait_to_pending(
+        &self,
+        request: WaitToPendingRequest,
+    ) -> Result<WaitToPendingOutcome, String> {
+        let response = unavailable_response(request.cell_id, None);
+        Ok(WaitToPendingOutcome::MissingCell(response))
+    }
+
     pub async fn shutdown(&self) -> Result<(), String> {
         Ok(())
     }
@@ -304,34 +365,30 @@ impl CodeModeService {
     }
 }
 
-impl Default for CodeModeService {
+impl Default for InProcessCodeModeSession {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl CodeModeSession for CodeModeService {
-    fn is_alive(&self) -> bool {
-        true
-    }
-
+impl CodeModeSession for InProcessCodeModeSession {
     fn execute<'a>(
         &'a self,
         request: ExecuteRequest,
     ) -> CodeModeSessionResultFuture<'a, StartedCell> {
-        Box::pin(CodeModeService::execute(self, request))
+        Box::pin(InProcessCodeModeSession::execute(self, request))
     }
 
     fn wait<'a>(&'a self, request: WaitRequest) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
-        Box::pin(CodeModeService::wait(self, request))
+        Box::pin(InProcessCodeModeSession::wait(self, request))
     }
 
     fn terminate<'a>(&'a self, cell_id: CellId) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
-        Box::pin(CodeModeService::terminate(self, cell_id))
+        Box::pin(InProcessCodeModeSession::terminate(self, cell_id))
     }
 
     fn shutdown<'a>(&'a self) -> CodeModeSessionResultFuture<'a, ()> {
-        Box::pin(CodeModeService::shutdown(self))
+        Box::pin(InProcessCodeModeSession::shutdown(self))
     }
 }
 
@@ -355,16 +412,113 @@ fn request_summary(request: &ExecuteRequest) -> Option<String> {
 }
 '@
 
-    [System.IO.File]::WriteAllText(
-        $runtimePath,
-        $runtimeSource,
-        [System.Text.UTF8Encoding]::new($false)
-    )
-    [System.IO.File]::WriteAllText(
-        $servicePath,
-        $serviceSource,
-        [System.Text.UTF8Encoding]::new($false)
-    )
+    $remoteSessionSource = @'
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use codex_code_mode_protocol::CellId;
+use codex_code_mode_protocol::CodeModeSession;
+use codex_code_mode_protocol::CodeModeSessionDelegate;
+use codex_code_mode_protocol::CodeModeSessionProvider;
+use codex_code_mode_protocol::CodeModeSessionProviderFuture;
+use codex_code_mode_protocol::CodeModeSessionResultFuture;
+use codex_code_mode_protocol::ExecuteRequest;
+use codex_code_mode_protocol::StartedCell;
+use codex_code_mode_protocol::WaitOutcome;
+use codex_code_mode_protocol::WaitRequest;
+
+use crate::InProcessCodeModeSession;
+use crate::NoopCodeModeSessionDelegate;
+
+/// Process-host provider is forced to the in-process unavailable stub on i686 musl.
+pub struct ProcessOwnedCodeModeSessionProvider {
+    _host_program: PathBuf,
+}
+
+impl ProcessOwnedCodeModeSessionProvider {
+    pub fn with_host_program(host_program: PathBuf) -> Self {
+        Self {
+            _host_program: host_program,
+        }
+    }
+}
+
+impl Default for ProcessOwnedCodeModeSessionProvider {
+    fn default() -> Self {
+        Self::with_host_program(PathBuf::from("codex-code-mode-host"))
+    }
+}
+
+impl CodeModeSessionProvider for ProcessOwnedCodeModeSessionProvider {
+    fn create_session<'a>(
+        &'a self,
+        delegate: Arc<dyn CodeModeSessionDelegate>,
+    ) -> CodeModeSessionProviderFuture<'a> {
+        Box::pin(async move {
+            let session: Arc<dyn CodeModeSession> =
+                Arc::new(InProcessCodeModeSession::with_delegate(delegate));
+            Ok(session)
+        })
+    }
+}
+
+/// Compatibility wrapper around the in-process unavailable session.
+pub struct ProcessOwnedCodeModeSession {
+    inner: InProcessCodeModeSession,
+}
+
+impl ProcessOwnedCodeModeSession {
+    pub fn new() -> Self {
+        Self {
+            inner: InProcessCodeModeSession::new(),
+        }
+    }
+
+    pub fn with_delegate(delegate: Arc<dyn CodeModeSessionDelegate>) -> Self {
+        Self {
+            inner: InProcessCodeModeSession::with_delegate(delegate),
+        }
+    }
+}
+
+impl Default for ProcessOwnedCodeModeSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CodeModeSession for ProcessOwnedCodeModeSession {
+    fn execute<'a>(
+        &'a self,
+        request: ExecuteRequest,
+    ) -> CodeModeSessionResultFuture<'a, StartedCell> {
+        Box::pin(InProcessCodeModeSession::execute(&self.inner, request))
+    }
+
+    fn wait<'a>(&'a self, request: WaitRequest) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
+        Box::pin(InProcessCodeModeSession::wait(&self.inner, request))
+    }
+
+    fn terminate<'a>(&'a self, cell_id: CellId) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
+        Box::pin(InProcessCodeModeSession::terminate(&self.inner, cell_id))
+    }
+
+    fn shutdown<'a>(&'a self) -> CodeModeSessionResultFuture<'a, ()> {
+        Box::pin(InProcessCodeModeSession::shutdown(&self.inner))
+    }
+}
+
+// Keep the unused import intentional for API parity with the full build path.
+#[allow(dead_code)]
+fn _noop_delegate() -> NoopCodeModeSessionDelegate {
+    NoopCodeModeSessionDelegate
+}
+'@
+
+    [System.IO.File]::WriteAllText((Join-Path $srcDir "lib.rs"), $libSource, $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $srcDir "v8_init.rs"), $v8InitSource, $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $srcDir "service.rs"), $serviceSource, $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $srcDir "remote_session.rs"), $remoteSessionSource, $utf8)
 
     return $true
 }
