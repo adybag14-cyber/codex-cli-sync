@@ -236,6 +236,14 @@ jobs:
             -ClearExistingAssets `
             -Prerelease
 
+      - name: Fail If Custom Patch Failed
+        if: always() && steps.sync.outputs.changed == 'true' && steps.sync.outputs.patch_status == 'failed'
+        shell: pwsh
+        env:
+          PATCH_ERROR_SUMMARY: ${{ steps.sync.outputs.patch_error_summary }}
+        run: |
+          throw "Custom Windows patch application failed: $env:PATCH_ERROR_SUMMARY"
+
       - name: Commit State Files
         if: steps.sync.outputs.changed == 'true' && steps.sync.outputs.patch_status == 'applied'
         shell: pwsh

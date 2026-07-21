@@ -315,6 +315,8 @@ $toolHandlersPath = Get-SourceFile -RelativePath "codex-rs\core\src\tools\handle
 $execPolicyPath = Get-SourceFile -RelativePath "codex-rs\core\src\exec_policy.rs"
 $loginServerPath = Get-SourceFile -RelativePath "codex-rs\login\src\server.rs"
 $loginServerE2ePath = Get-SourceFile -RelativePath "codex-rs\login\tests\suite\login_server_e2e.rs"
+$tuiLibPath = Get-SourceFile -RelativePath "codex-rs\tui\src\lib.rs"
+$onboardingScreenPath = Get-SourceFile -RelativePath "codex-rs\tui\src\onboarding\onboarding_screen.rs"
 
 $permissionsReplacement = @'
                 approval_policy: if cfg!(target_os = "windows") {
@@ -357,11 +359,41 @@ if (-not (Set-ConfigPermissionsForWindowsCustom -Path $configPath)) {
 
 Set-LoginCallbackPortForWindowsCustom -ServerPath $loginServerPath -TestPath $loginServerE2ePath
 
-Replace-Once `
+# The original elevated-sandbox NUX kill switch was removed upstream in July 2026.
+# Keep supporting older revisions, but patch the active startup and onboarding
+# decisions as the durable contract on newer revisions.
+Replace-Optional `
     -Path $windowsSandboxPath `
     -Pattern 'pub const ELEVATED_SANDBOX_NUX_ENABLED: bool = true;' `
     -Replacement 'pub const ELEVATED_SANDBOX_NUX_ENABLED: bool = false;' `
-    -Description "disable elevated sandbox NUX"
+    -Description "disable legacy elevated sandbox NUX kill switch"
+
+Replace-Once `
+    -Path $tuiLibPath `
+    -Pattern 'let\s+should_prompt_windows_sandbox_nux_at_startup\s*=\s*\(trust_decision_was_made\s*&&\s*windows_sandbox_level\s*==\s*WindowsSandboxLevel::Disabled\)\s*\|\|\s*required_elevated_sandbox_needs_setup;' `
+    -Replacement @'
+let should_prompt_windows_sandbox_nux_at_startup = {
+        let _ = (
+            &trust_decision_was_made,
+            &windows_sandbox_level,
+            &required_elevated_sandbox_needs_setup,
+        );
+        false
+    };
+'@ `
+    -Description "disable Windows sandbox startup NUX prompt"
+
+Replace-Once `
+    -Path $onboardingScreenPath `
+    -Pattern 'let\s+show_windows_create_sandbox_hint\s*=\s*crate::windows_sandbox::level_from_config\(&config\)\s*==\s*WindowsSandboxLevel::Disabled;' `
+    -Replacement @'
+let show_windows_create_sandbox_hint = {
+            let _ =
+                crate::windows_sandbox::level_from_config(&config) == WindowsSandboxLevel::Disabled;
+            false
+        };
+'@ `
+    -Description "disable Windows sandbox onboarding hint"
 
 Insert-AfterOnce `
     -Path $windowsSandboxPath `
@@ -448,7 +480,8 @@ Insert-AfterOnce `
 
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(AskForApproval::Never)' -Description "approval policy override"
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(PermissionProfile::Disabled)' -Description "permission profile override"
-Assert-Contains -Path $windowsSandboxPath -Needle 'pub const ELEVATED_SANDBOX_NUX_ENABLED: bool = false;' -Description "sandbox NUX disabled"
+Assert-Contains -Path $tuiLibPath -Needle 'let should_prompt_windows_sandbox_nux_at_startup = {' -Description "sandbox startup NUX disabled"
+Assert-Contains -Path $onboardingScreenPath -Needle 'let show_windows_create_sandbox_hint = {' -Description "sandbox onboarding hint disabled"
 Assert-Contains -Path $windowsSandboxPath -Needle 'return WindowsSandboxLevel::Disabled;' -Description "sandbox level disabled"
 Assert-Contains -Path $windowsSandboxPath -Needle 'return Ok(());' -Description "sandbox setup no-op"
 Assert-Contains -Path $toolHandlersPath -Needle 'sandbox_permissions: SandboxPermissions::UseDefault' -Description "tool sandbox escalation disabled"
