@@ -1,10 +1,10 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "44d76c6a6dd04fa2efc302b906ac8774267a1272",
+  "upstream_sha": "4462b9deef211723b781b426f5e5d36a5777115f",
   "linux_target": "i686-unknown-linux-musl",
-  "generated_at_utc": "2026-07-23T05:17:05.4472629Z",
-  "release_tag": "linux-i686-musl-44d76c6a6dd0",
+  "generated_at_utc": "2026-07-23T08:07:53.3552445Z",
+  "release_tag": "linux-i686-musl-4462b9deef21",
   "rolling_tag": "latest-linux-i686-musl",
   "custom_runtime_patches": "not_applied",
   "compatibility_patches": [
@@ -44,13 +44,13 @@
     "file_output": "/home/runner/work/codex-cli-sync/codex-cli-sync/out/codex-upstream-linux-i686/codex-rs/target/i686-unknown-linux-musl/release/codex: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), statically linked, stripped"
   },
   "artifact": {
-    "name": "codex-linux-i686-musl-44d76c6a6dd0.tar.gz",
-    "sha256": "54e95b3083497dc4ce7955fd83453eb8b7c872a9bd44bb3449175b74d6db0064"
+    "name": "codex-linux-i686-musl-4462b9deef21.tar.gz",
+    "sha256": "289a3d633e9b252c928c771cbaef23cb22328453126c4c3565b63bd91454e9ea"
   },
   "packaged_files": [
     {
       "path": "codex",
-      "sha256": "e3a996fd1f510b8be05d1d117461d0aac87f0d6d7b1b41e28448988e7c4f51e3"
+      "sha256": "4e440e7064258b6121449cfe850ba74c7e943a0d3f8759a4238d36497e72d934"
     },
     {
       "path": "certs/ca-certificates.crt",
@@ -67,11 +67,11 @@
   ],
   "release_files": [
     {
-      "name": "codex-linux-i686-musl-44d76c6a6dd0.tar.gz",
-      "sha256": "54e95b3083497dc4ce7955fd83453eb8b7c872a9bd44bb3449175b74d6db0064"
+      "name": "codex-linux-i686-musl-4462b9deef21.tar.gz",
+      "sha256": "289a3d633e9b252c928c771cbaef23cb22328453126c4c3565b63bd91454e9ea"
     },
     {
-      "name": "codex-linux-i686-musl-44d76c6a6dd0.manifest.json",
+      "name": "codex-linux-i686-musl-4462b9deef21.manifest.json",
       "sha256": null
     }
   ]
