@@ -24,7 +24,7 @@ The workflow also builds a Linux i686 musl package in a separate job:
 - publishes a per-SHA prerelease and refreshes `latest-linux-i686-musl`
 - commits the latest synced Linux i686 upstream SHA and manifest after a successful build
 
-The i686 musl package keeps target-specific compatibility adjustments: it enables vendored OpenSSL for static TLS, builds vendored OpenSSL with the lock-based atomic fallback for Zig's 32-bit musl linker, clears restored `openssl-sys` target artifacts so cached builds pick up those C flags, disables JavaScript code mode because `rusty_v8` does not publish a prebuilt V8 archive for `i686-unknown-linux-musl`, and normalizes Linux sandbox syscall constants for 32-bit musl compilation. The bundled CA file comes from the Linux runner's system `ca-certificates` package and is recorded in the manifest with its SHA-256.
+The i686 musl package keeps target-specific compatibility adjustments: it enables vendored OpenSSL for static TLS, builds vendored OpenSSL with the lock-based atomic fallback for Zig's 32-bit musl linker, clears restored `openssl-sys` target artifacts so cached builds pick up those C flags, compiles the locked `rusty_v8` crate from source as real 32-bit x86 so JavaScript code mode remains enabled, raises the `codex-mcp-server` recursion limit to 256 for current upstream release builds, and normalizes Linux sandbox syscall constants for 32-bit musl compilation. The bundled CA file comes from the Linux runner's system `ca-certificates` package and is recorded in the manifest with its SHA-256.
 
 The Windows custom patch is maintained in [`scripts/patch-codex-windows-custom.ps1`](scripts/patch-codex-windows-custom.ps1). If an upstream source anchor moves, the workflow publishes a release card and manifest that explicitly say `CUSTOM PATCHES FAILED`, uploads no Codex binary for that run, and does not advance the successful upstream state.
 For Rust config construction, the patcher prefers named/shorthand struct-field rewriting over one large text anchor so normal upstream refactors can move or reformat surrounding code without losing the required Windows behavior.
@@ -49,6 +49,6 @@ Release layout:
 - `latest-linux-i686-musl` stays as the rolling "always latest i686 musl build" prerelease
 - `linux-i686-musl-<upstream-sha>` releases preserve per-upstream-SHA i686 musl build history
 
-Manual `workflow_dispatch` runs expose a `force` toggle and an `upstream_ref` input. The default upstream ref is `main`; OpenAI Codex does not currently publish a `master` branch.
+Manual `workflow_dispatch` runs expose `force`, `upstream_ref`, `run_target`, and `dry_run` inputs. `run_target` can isolate either failing build, while `dry_run` suppresses release/state mutations but still builds and uploads artifacts. The default upstream ref is `main`; OpenAI Codex does not currently publish a `master` branch.
 
 Release publishing is handled by [`scripts/publish-github-release.ps1`](scripts/publish-github-release.ps1) through the GitHub Releases API and the repo-scoped `GITHUB_TOKEN`.

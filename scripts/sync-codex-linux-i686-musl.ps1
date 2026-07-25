@@ -118,9 +118,10 @@ function Enable-I686MuslVendoredOpenSsl {
 openssl-sys = { workspace = true, features = ["vendored"] }
 '@
 
+    $updatedText = ($text.TrimEnd() + $addition + "`n").Replace("`r`n", "`n")
     [System.IO.File]::WriteAllText(
         $CargoTomlPath,
-        $text.TrimEnd() + $addition + [Environment]::NewLine,
+        $updatedText,
         [System.Text.UTF8Encoding]::new($false)
     )
     return $true
@@ -151,6 +152,7 @@ function Enable-I686MuslBlake3PureFeature {
         $text = $text.TrimEnd() + $addition
     }
 
+    $text = $text.Replace("`r`n", "`n")
     [System.IO.File]::WriteAllText(
         $CargoTomlPath,
         $text,
@@ -158,369 +160,92 @@ function Enable-I686MuslBlake3PureFeature {
     )
     return $true
 }
-function Disable-I686MuslV8CodeMode {
-    param([Parameter(Mandatory = $true)][string]$CodexRsDir)
-
-    $codeModeDir = Join-Path $CodexRsDir "code-mode"
-    $srcDir = Join-Path $codeModeDir "src"
-    $cargoTomlPath = Join-Path $codeModeDir "Cargo.toml"
-
-    if (-not (Test-Path -LiteralPath $cargoTomlPath -PathType Leaf)) {
-        throw "Required code-mode file not found: $cargoTomlPath"
-    }
-    if (-not (Test-Path -LiteralPath $srcDir -PathType Container)) {
-        throw "Required code-mode src dir not found: $srcDir"
-    }
-
-    # Drop V8/deno deps — rusty_v8 has no i686-unknown-linux-musl prebuilds.
-    $cargoToml = [System.IO.File]::ReadAllText($cargoTomlPath)
-    $cargoToml = $cargoToml -replace 'sandbox = \["v8/v8_enable_sandbox"\]', 'sandbox = []'
-    $cargoToml = $cargoToml -replace '(?m)^deno_core_icudata = \{ workspace = true \}\r?\n', ''
-    $cargoToml = $cargoToml -replace '(?m)^v8 = \{ workspace = true \}\r?\n', ''
-    # Full runtime path only; stub does not need codex-protocol.
-    $cargoToml = $cargoToml -replace '(?m)^codex-protocol = \{ workspace = true \}\r?\n', ''
-    [System.IO.File]::WriteAllText(
-        $cargoTomlPath,
-        $cargoToml,
-        [System.Text.UTF8Encoding]::new($false)
+function Ensure-RustCrateRecursionLimit {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$Minimum = 256
     )
 
-    # Replace the whole source tree with a compile-only stub that preserves the
-    # public API used by codex-core / code-mode-host (InProcess + ProcessOwned
-    # providers/sessions, V8 init shims). Real JS execution is unavailable.
-    if (Test-Path -LiteralPath $srcDir) {
-        Remove-Item -LiteralPath $srcDir -Recurse -Force
-    }
-    New-Item -ItemType Directory -Force -Path $srcDir | Out-Null
-
-    $utf8 = [System.Text.UTF8Encoding]::new($false)
-
-    $libSource = @'
-pub use codex_code_mode_protocol::*;
-pub use remote_session::ProcessOwnedCodeModeSession;
-pub use remote_session::ProcessOwnedCodeModeSessionProvider;
-pub use service::InProcessCodeModeSession;
-pub use service::InProcessCodeModeSessionProvider;
-pub use service::NoopCodeModeSessionDelegate;
-pub use v8_init::V8JitMode;
-pub use v8_init::initialize_v8;
-
-mod remote_session;
-mod service;
-mod v8_init;
-'@
-
-    $v8InitSource = @'
-/// JIT mode selector kept for API compatibility with the full V8 build.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum V8JitMode {
-    Enabled,
-    Disabled,
-}
-
-/// No-op on i686 musl: JavaScript code mode is intentionally unavailable.
-pub fn initialize_v8(_jit_mode: V8JitMode) -> Result<(), String> {
-    Ok(())
-}
-'@
-
-    $serviceSource = @'
-use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
-
-use codex_code_mode_protocol::CellId;
-use codex_code_mode_protocol::CodeModeNestedToolCall;
-use codex_code_mode_protocol::CodeModeSession;
-use codex_code_mode_protocol::CodeModeSessionDelegate;
-use codex_code_mode_protocol::CodeModeSessionProvider;
-use codex_code_mode_protocol::CodeModeSessionProviderFuture;
-use codex_code_mode_protocol::CodeModeSessionResultFuture;
-use codex_code_mode_protocol::ExecuteRequest;
-use codex_code_mode_protocol::ExecuteToPendingOutcome;
-use codex_code_mode_protocol::FunctionCallOutputContentItem;
-use codex_code_mode_protocol::NotificationFuture;
-use codex_code_mode_protocol::RuntimeResponse;
-use codex_code_mode_protocol::StartedCell;
-use codex_code_mode_protocol::ToolInvocationFuture;
-use codex_code_mode_protocol::WaitOutcome;
-use codex_code_mode_protocol::WaitRequest;
-use codex_code_mode_protocol::WaitToPendingOutcome;
-use codex_code_mode_protocol::WaitToPendingRequest;
-use tokio::sync::oneshot;
-use tokio_util::sync::CancellationToken;
-
-const UNAVAILABLE: &str = "code mode is unavailable in this i686-unknown-linux-musl build because rusty_v8 does not publish a prebuilt V8 archive for this target";
-
-pub struct NoopCodeModeSessionDelegate;
-
-impl CodeModeSessionDelegate for NoopCodeModeSessionDelegate {
-    fn invoke_tool<'a>(
-        &'a self,
-        _invocation: CodeModeNestedToolCall,
-        cancellation_token: CancellationToken,
-    ) -> ToolInvocationFuture<'a> {
-        Box::pin(async move {
-            cancellation_token.cancelled().await;
-            Err("code mode nested tools are unavailable".to_string())
-        })
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Required Rust crate root not found: $Path"
     }
 
-    fn notify<'a>(
-        &'a self,
-        _call_id: String,
-        _cell_id: CellId,
-        _text: String,
-        _cancellation_token: CancellationToken,
-    ) -> NotificationFuture<'a> {
-        Box::pin(async { Ok(()) })
-    }
-
-    fn cell_closed(&self, _cell_id: &CellId) {}
-}
-
-#[derive(Default)]
-pub struct InProcessCodeModeSessionProvider;
-
-impl CodeModeSessionProvider for InProcessCodeModeSessionProvider {
-    fn create_session<'a>(
-        &'a self,
-        delegate: Arc<dyn CodeModeSessionDelegate>,
-    ) -> CodeModeSessionProviderFuture<'a> {
-        Box::pin(async move {
-            let session: Arc<dyn CodeModeSession> =
-                Arc::new(InProcessCodeModeSession::with_delegate(delegate));
-            Ok(session)
-        })
-    }
-}
-
-pub struct InProcessCodeModeSession {
-    next_cell_id: AtomicU64,
-    delegate: Arc<dyn CodeModeSessionDelegate>,
-}
-
-impl InProcessCodeModeSession {
-    pub fn new() -> Self {
-        Self::with_delegate(Arc::new(NoopCodeModeSessionDelegate))
-    }
-
-    pub fn with_delegate(delegate: Arc<dyn CodeModeSessionDelegate>) -> Self {
-        Self {
-            next_cell_id: AtomicU64::new(1),
-            delegate,
+    $text = [System.IO.File]::ReadAllText($Path)
+    $pattern = '(?m)^#!\[recursion_limit\s*=\s*"(?<value>\d+)"\]\s*\r?\n'
+    $match = [regex]::Match($text, $pattern)
+    if ($match.Success) {
+        $current = [int]$match.Groups['value'].Value
+        if ($current -ge $Minimum) {
+            Write-Host "Kept Rust recursion limit $current in $Path."
+            return $false
         }
+        $regex = [regex]::new($pattern)
+        $text = $regex.Replace($text, "#![recursion_limit = `"$Minimum`"]`n", 1)
+    } else {
+        $text = "#![recursion_limit = `"$Minimum`"]`n" + $text
     }
 
-    pub fn with_delegate_and_task_failure_handler(
-        delegate: Arc<dyn CodeModeSessionDelegate>,
-        _task_failure_handler: Arc<dyn Fn(String) + Send + Sync>,
-    ) -> Self {
-        Self::with_delegate(delegate)
-    }
-
-    pub async fn execute(&self, request: ExecuteRequest) -> Result<StartedCell, String> {
-        let cell_id = self.allocate_cell_id();
-        let response = unavailable_response(cell_id.clone(), request_summary(&request));
-        self.delegate.cell_closed(&cell_id);
-        let (response_tx, response_rx) = oneshot::channel();
-        let _ = response_tx.send(response);
-        Ok(StartedCell::new(cell_id, response_rx))
-    }
-
-    pub async fn execute_to_pending(
-        &self,
-        request: ExecuteRequest,
-    ) -> Result<ExecuteToPendingOutcome, String> {
-        let cell_id = self.allocate_cell_id();
-        let response = unavailable_response(cell_id.clone(), request_summary(&request));
-        self.delegate.cell_closed(&cell_id);
-        Ok(ExecuteToPendingOutcome::Completed(response))
-    }
-
-    pub async fn wait(&self, request: WaitRequest) -> Result<WaitOutcome, String> {
-        let response = unavailable_response(request.cell_id, None);
-        Ok(WaitOutcome::MissingCell(response))
-    }
-
-    pub async fn terminate(&self, cell_id: CellId) -> Result<WaitOutcome, String> {
-        let response = unavailable_response(cell_id, None);
-        Ok(WaitOutcome::MissingCell(response))
-    }
-
-    pub async fn wait_to_pending(
-        &self,
-        request: WaitToPendingRequest,
-    ) -> Result<WaitToPendingOutcome, String> {
-        let response = unavailable_response(request.cell_id, None);
-        Ok(WaitToPendingOutcome::MissingCell(response))
-    }
-
-    pub async fn shutdown(&self) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn allocate_cell_id(&self) -> CellId {
-        CellId::new(self.next_cell_id.fetch_add(1, Ordering::Relaxed).to_string())
-    }
-}
-
-impl Default for InProcessCodeModeSession {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CodeModeSession for InProcessCodeModeSession {
-    fn execute<'a>(
-        &'a self,
-        request: ExecuteRequest,
-    ) -> CodeModeSessionResultFuture<'a, StartedCell> {
-        Box::pin(InProcessCodeModeSession::execute(self, request))
-    }
-
-    fn wait<'a>(&'a self, request: WaitRequest) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
-        Box::pin(InProcessCodeModeSession::wait(self, request))
-    }
-
-    fn terminate<'a>(&'a self, cell_id: CellId) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
-        Box::pin(InProcessCodeModeSession::terminate(self, cell_id))
-    }
-
-    fn shutdown<'a>(&'a self) -> CodeModeSessionResultFuture<'a, ()> {
-        Box::pin(InProcessCodeModeSession::shutdown(self))
-    }
-}
-
-fn unavailable_response(cell_id: CellId, request_summary: Option<String>) -> RuntimeResponse {
-    let mut content_items = Vec::new();
-    if let Some(summary) = request_summary {
-        content_items.push(FunctionCallOutputContentItem::InputText { text: summary });
-    }
-    RuntimeResponse::Result {
-        cell_id,
-        content_items,
-        error_text: Some(UNAVAILABLE.to_string()),
-    }
-}
-
-fn request_summary(request: &ExecuteRequest) -> Option<String> {
-    if request.source.trim().is_empty() {
-        return None;
-    }
-    Some("JavaScript code mode was requested, but this build does not include V8.".to_string())
-}
-'@
-
-    $remoteSessionSource = @'
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use codex_code_mode_protocol::CellId;
-use codex_code_mode_protocol::CodeModeSession;
-use codex_code_mode_protocol::CodeModeSessionDelegate;
-use codex_code_mode_protocol::CodeModeSessionProvider;
-use codex_code_mode_protocol::CodeModeSessionProviderFuture;
-use codex_code_mode_protocol::CodeModeSessionResultFuture;
-use codex_code_mode_protocol::ExecuteRequest;
-use codex_code_mode_protocol::StartedCell;
-use codex_code_mode_protocol::WaitOutcome;
-use codex_code_mode_protocol::WaitRequest;
-
-use crate::InProcessCodeModeSession;
-use crate::NoopCodeModeSessionDelegate;
-
-/// Process-host provider is forced to the in-process unavailable stub on i686 musl.
-pub struct ProcessOwnedCodeModeSessionProvider {
-    _host_program: PathBuf,
-}
-
-impl ProcessOwnedCodeModeSessionProvider {
-    pub fn with_host_program(host_program: PathBuf) -> Self {
-        Self {
-            _host_program: host_program,
-        }
-    }
-}
-
-impl Default for ProcessOwnedCodeModeSessionProvider {
-    fn default() -> Self {
-        Self::with_host_program(PathBuf::from("codex-code-mode-host"))
-    }
-}
-
-impl CodeModeSessionProvider for ProcessOwnedCodeModeSessionProvider {
-    fn create_session<'a>(
-        &'a self,
-        delegate: Arc<dyn CodeModeSessionDelegate>,
-    ) -> CodeModeSessionProviderFuture<'a> {
-        Box::pin(async move {
-            let session: Arc<dyn CodeModeSession> =
-                Arc::new(InProcessCodeModeSession::with_delegate(delegate));
-            Ok(session)
-        })
-    }
-}
-
-/// Compatibility wrapper around the in-process unavailable session.
-pub struct ProcessOwnedCodeModeSession {
-    inner: InProcessCodeModeSession,
-}
-
-impl ProcessOwnedCodeModeSession {
-    pub fn new() -> Self {
-        Self {
-            inner: InProcessCodeModeSession::new(),
-        }
-    }
-
-    pub fn with_delegate(delegate: Arc<dyn CodeModeSessionDelegate>) -> Self {
-        Self {
-            inner: InProcessCodeModeSession::with_delegate(delegate),
-        }
-    }
-}
-
-impl Default for ProcessOwnedCodeModeSession {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CodeModeSession for ProcessOwnedCodeModeSession {
-    fn execute<'a>(
-        &'a self,
-        request: ExecuteRequest,
-    ) -> CodeModeSessionResultFuture<'a, StartedCell> {
-        Box::pin(InProcessCodeModeSession::execute(&self.inner, request))
-    }
-
-    fn wait<'a>(&'a self, request: WaitRequest) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
-        Box::pin(InProcessCodeModeSession::wait(&self.inner, request))
-    }
-
-    fn terminate<'a>(&'a self, cell_id: CellId) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
-        Box::pin(InProcessCodeModeSession::terminate(&self.inner, cell_id))
-    }
-
-    fn shutdown<'a>(&'a self) -> CodeModeSessionResultFuture<'a, ()> {
-        Box::pin(InProcessCodeModeSession::shutdown(&self.inner))
-    }
-}
-
-// Keep the unused import intentional for API parity with the full build path.
-#[allow(dead_code)]
-fn _noop_delegate() -> NoopCodeModeSessionDelegate {
-    NoopCodeModeSessionDelegate
-}
-'@
-
-    [System.IO.File]::WriteAllText((Join-Path $srcDir "lib.rs"), $libSource, $utf8)
-    [System.IO.File]::WriteAllText((Join-Path $srcDir "v8_init.rs"), $v8InitSource, $utf8)
-    [System.IO.File]::WriteAllText((Join-Path $srcDir "service.rs"), $serviceSource, $utf8)
-    [System.IO.File]::WriteAllText((Join-Path $srcDir "remote_session.rs"), $remoteSessionSource, $utf8)
-
+    [System.IO.File]::WriteAllText($Path, $text, [System.Text.UTF8Encoding]::new($false))
+    Write-Host "Raised Rust recursion limit to $Minimum in $Path."
     return $true
+}
+
+function Get-CargoLockedPackageVersion {
+    param(
+        [Parameter(Mandatory = $true)][string]$CargoLockPath,
+        [Parameter(Mandatory = $true)][string]$PackageName
+    )
+
+    if (-not (Test-Path -LiteralPath $CargoLockPath -PathType Leaf)) {
+        throw "Cargo.lock not found: $CargoLockPath"
+    }
+
+    $text = [System.IO.File]::ReadAllText($CargoLockPath)
+    $pattern = '(?ms)^\[\[package\]\]\s*\r?\nname\s*=\s*"' + [regex]::Escape($PackageName) + '"\s*\r?\nversion\s*=\s*"(?<version>[^"]+)"'
+    $match = [regex]::Match($text, $pattern)
+    if (-not $match.Success) {
+        throw "Package '$PackageName' was not found in $CargoLockPath"
+    }
+    return $match.Groups['version'].Value
+}
+
+function Enable-I686MuslRustyV8SourceBuild {
+    param([Parameter(Mandatory = $true)][string]$CodexRsDir)
+
+    $codeModeCargoToml = Join-Path $CodexRsDir 'code-mode/Cargo.toml'
+    $cargoLockPath = Join-Path $CodexRsDir 'Cargo.lock'
+    if (-not (Test-Path -LiteralPath $codeModeCargoToml -PathType Leaf)) {
+        throw "Required code-mode manifest not found: $codeModeCargoToml"
+    }
+
+    $codeModeManifest = [System.IO.File]::ReadAllText($codeModeCargoToml)
+    foreach ($required in @(
+        'sandbox = ["v8/v8_enable_sandbox"]',
+        'deno_core_icudata = { workspace = true }',
+        'v8 = { workspace = true }'
+    )) {
+        if (-not $codeModeManifest.Contains($required)) {
+            throw "Upstream code-mode dependency contract changed; missing '$required' in $codeModeCargoToml"
+        }
+    }
+
+    $v8Version = Get-CargoLockedPackageVersion -CargoLockPath $cargoLockPath -PackageName 'v8'
+    $env:V8_FROM_SOURCE = '1'
+    $env:PYTHON = if ($env:PYTHON) { $env:PYTHON } else { 'python3' }
+    $env:CLANG_BASE_PATH = if ($env:CLANG_BASE_PATH) { $env:CLANG_BASE_PATH } else { '/usr/lib/llvm-19' }
+    $env:LIBCLANG_PATH = if ($env:LIBCLANG_PATH) { $env:LIBCLANG_PATH } else { '/usr/lib/llvm-19/lib' }
+    $env:NINJA = if ($env:NINJA) { $env:NINJA } else { '/usr/bin/ninja' }
+    $env:PRINT_GN_ARGS = '1'
+    $env:NUM_JOBS = if ($env:NUM_JOBS) { $env:NUM_JOBS } else { '2' }
+    $env:GN_ARGS = if ($env:GN_ARGS) {
+        $env:GN_ARGS
+    } else {
+        'v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
+    }
+
+    Write-Host "Configured rusty_v8 $v8Version to build from source for i686 Linux."
+    Write-Host "rusty_v8 GN_ARGS: $env:GN_ARGS"
+    return $v8Version
 }
 
 function Enable-I686MuslLinuxSandboxSyscallBuild {
@@ -717,7 +442,8 @@ $codexRsDir = Join-Path $sourceDir "codex-rs"
 $cliCargoTomlPath = Join-Path $codexRsDir "cli/Cargo.toml"
 $addedVendoredOpenSsl = Enable-I686MuslVendoredOpenSsl -CargoTomlPath $cliCargoTomlPath
 $enabledBlake3Pure = Enable-I686MuslBlake3PureFeature -CargoTomlPath $cliCargoTomlPath
-$disabledV8CodeMode = Disable-I686MuslV8CodeMode -CodexRsDir $codexRsDir
+$rustyV8Version = Enable-I686MuslRustyV8SourceBuild -CodexRsDir $codexRsDir
+$mcpServerRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path (Join-Path $codexRsDir "mcp-server/src/lib.rs") -Minimum 256
 $patchedLinuxSandboxSyscalls = Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $codexRsDir
 Set-I686MuslBuildEnvironment
 
@@ -742,6 +468,7 @@ try {
     }
 
     Write-Host "i686 OpenSSL CFLAGS: $env:CFLAGS_i686_unknown_linux_musl"
+    Write-Host "Building rusty_v8 $rustyV8Version from source for $LinuxTarget (V8_FROM_SOURCE=$env:V8_FROM_SOURCE)."
 
     & rustc --print target-libdir --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
@@ -763,6 +490,37 @@ try {
 }
 
 $targetDir = Join-Path $sourceDir "codex-rs/target/$LinuxTarget/release"
+$v8ArchivePath = Join-Path $targetDir "gn_out/obj/librusty_v8.a"
+$v8GnArgsPath = Join-Path $targetDir "gn_out/args.gn"
+if (-not (Test-Path -LiteralPath $v8ArchivePath -PathType Leaf)) {
+    throw "rusty_v8 source archive was not produced: $v8ArchivePath"
+}
+if (-not (Test-Path -LiteralPath $v8GnArgsPath -PathType Leaf)) {
+    throw "rusty_v8 GN args were not produced: $v8GnArgsPath"
+}
+$v8GnArgsText = [System.IO.File]::ReadAllText($v8GnArgsPath)
+if ($v8GnArgsText -notmatch 'target_cpu\s*=\s*"x86"' -or $v8GnArgsText -notmatch 'v8_target_cpu\s*=\s*"x86"') {
+    throw "rusty_v8 GN output is not configured for x86: $v8GnArgsPath"
+}
+
+$env:V8_ARCHIVE_PATH = $v8ArchivePath
+$env:V8_MEMBER_PATH = "/tmp/rusty-v8-i686-member-$PID.o"
+$v8ObjectFileOutput = [string](& bash -lc @'
+set -euo pipefail
+member="$(ar t "$V8_ARCHIVE_PATH" | head -n 1)"
+test -n "$member"
+ar p "$V8_ARCHIVE_PATH" "$member" > "$V8_MEMBER_PATH"
+file "$V8_MEMBER_PATH"
+rm -f "$V8_MEMBER_PATH"
+'@)
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not inspect a member of the rusty_v8 archive."
+}
+Write-Host $v8ObjectFileOutput
+if ($v8ObjectFileOutput -notmatch 'ELF 32-bit' -or $v8ObjectFileOutput -notmatch 'Intel 80386') {
+    throw "rusty_v8 archive is not a real 32-bit i386 build: $v8ObjectFileOutput"
+}
+
 $codexPath = Join-Path $targetDir "codex"
 if (-not (Test-Path -LiteralPath $codexPath -PathType Leaf)) {
     throw "Build output not found: $codexPath"
@@ -812,8 +570,8 @@ Files:
 - certs/ca-certificates.crt
 
 Compatibility note:
-  This i686 musl build does not include JavaScript code mode because rusty_v8
-  does not publish a prebuilt V8 archive for i686-unknown-linux-musl.
+  JavaScript code mode is included. rusty_v8 is compiled from source as a real
+  32-bit x86 V8 static archive during the GitHub Actions build.
 
 Tiny Core example:
   install -m 755 codex /home/tc/codex
@@ -839,10 +597,16 @@ $manifest = [ordered]@{
     custom_runtime_patches     = "not_applied"
     compatibility_patches      = @(
         [ordered]@{
-            name   = "disable_v8_code_mode_for_i686_musl"
-            applied = [bool]$disabledV8CodeMode
-            reason = "rusty_v8 v147.4.0 does not publish librusty_v8_release_i686-unknown-linux-musl.a.gz"
-            effect = "JavaScript code mode returns an unavailable error on this i686 musl package; standard Codex CLI behavior remains built from upstream source."
+            name    = "build_rusty_v8_from_source_for_i686_musl"
+            applied = $env:V8_FROM_SOURCE -eq "1"
+            reason  = "rusty_v8 $rustyV8Version has no published i686-unknown-linux-musl archive, so CI builds the real x86 V8 archive from source."
+            effect  = "JavaScript code mode remains enabled in the i686 musl package."
+        },
+        [ordered]@{
+            name    = "raise_mcp_server_recursion_limit"
+            applied = $true
+            reason  = "Current upstream codex-mcp-server type queries exceed Rust's default recursion depth in release builds."
+            effect  = "codex-mcp-server builds deterministically with recursion_limit 256."
         },
         [ordered]@{
             name   = "i686_musl_linux_sandbox_syscall_compile_fix"
@@ -860,7 +624,14 @@ $manifest = [ordered]@{
     build_adjustments          = [ordered]@{
         vendored_openssl_for_i686_musl = [bool]$addedVendoredOpenSsl
         blake3_pure_for_i686_musl = [bool]$enabledBlake3Pure
-        v8_code_mode_disabled_for_i686_musl = [bool]$disabledV8CodeMode
+        rusty_v8_built_from_source_for_i686_musl = $env:V8_FROM_SOURCE -eq "1"
+        rusty_v8_version = $rustyV8Version
+        rusty_v8_gn_args = $env:GN_ARGS
+        rusty_v8_num_jobs = $env:NUM_JOBS
+        mcp_server_recursion_limit_256 = $true
+        mcp_server_recursion_limit_text_changed = [bool]$mcpServerRecursionLimitPatched
+        rusty_v8_archive_path = $v8ArchivePath
+        rusty_v8_archive_member_file_output = $v8ObjectFileOutput
         linux_sandbox_syscalls_patched_for_i686_musl = [bool]$patchedLinuxSandboxSyscalls
         openssl_no_c11_atomics_for_i686_musl = $true
         openssl_broken_clang_atomics_for_i686_musl = $true
@@ -872,6 +643,7 @@ $manifest = [ordered]@{
     verification              = [ordered]@{
         version_output = $versionOutput
         file_output    = $fileOutput
+        rusty_v8_object_file_output = $v8ObjectFileOutput
     }
     artifact                  = [ordered]@{
         name   = [System.IO.Path]::GetFileName($bundlePath)
