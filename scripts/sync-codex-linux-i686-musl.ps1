@@ -232,7 +232,7 @@ function Enable-I686MuslRustyV8SourceBuild {
     $v8Version = Get-CargoLockedPackageVersion -CargoLockPath $cargoLockPath -PackageName 'v8'
     $env:V8_FROM_SOURCE = '1'
     $env:PYTHON = if ($env:PYTHON) { $env:PYTHON } else { 'python3' }
-    $env:CLANG_BASE_PATH = if ($env:CLANG_BASE_PATH) { $env:CLANG_BASE_PATH } else { '/usr/lib/llvm-19' }
+    Remove-Item Env:CLANG_BASE_PATH -ErrorAction SilentlyContinue
     $env:LIBCLANG_PATH = if ($env:LIBCLANG_PATH) { $env:LIBCLANG_PATH } else { '/usr/lib/llvm-19/lib' }
     $env:NINJA = if ($env:NINJA) { $env:NINJA } else { '/usr/bin/ninja' }
     $env:PRINT_GN_ARGS = '1'
@@ -245,7 +245,31 @@ function Enable-I686MuslRustyV8SourceBuild {
 
     Write-Host "Configured rusty_v8 $v8Version to build from source for i686 Linux."
     Write-Host "rusty_v8 GN_ARGS: $env:GN_ARGS"
+    Write-Host "rusty_v8 compiler: Chromium bundled Clang/Compiler-RT (CLANG_BASE_PATH intentionally unset)."
     return $v8Version
+}
+
+function Remove-StaleRustyV8GnOutput {
+    param(
+        [Parameter(Mandatory = $true)][string]$CodexRsDir,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    $gnOutDir = Join-Path $CodexRsDir "target/$Target/release/gn_out"
+    $argsPath = Join-Path $gnOutDir 'args.gn'
+    if (-not (Test-Path -LiteralPath $argsPath -PathType Leaf)) {
+        return $false
+    }
+
+    $argsText = [System.IO.File]::ReadAllText($argsPath)
+    $usesForcedSystemClang = $argsText -match 'clang_base_path\s*=\s*"/usr/lib/llvm-[^"]+"'
+    if (-not $usesForcedSystemClang) {
+        return $false
+    }
+
+    Remove-Item -LiteralPath $gnOutDir -Recurse -Force
+    Write-Host "Removed stale rusty_v8 GN output that forced an incompatible system Clang: $gnOutDir"
+    return $true
 }
 
 function Enable-I686MuslLinuxSandboxSyscallBuild {
@@ -481,6 +505,7 @@ try {
         throw "cargo clean for openssl-sys failed with exit code $LASTEXITCODE"
     }
 
+    $removedStaleV8GnOutput = Remove-StaleRustyV8GnOutput -CodexRsDir $codexRsDir -Target $LinuxTarget
     cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
         throw "cargo zigbuild failed with exit code $LASTEXITCODE"
@@ -628,6 +653,9 @@ $manifest = [ordered]@{
         rusty_v8_version = $rustyV8Version
         rusty_v8_gn_args = $env:GN_ARGS
         rusty_v8_num_jobs = $env:NUM_JOBS
+        rusty_v8_compiler_toolchain = "Chromium bundled Clang/Compiler-RT"
+        rusty_v8_clang_base_path_forced = $false
+        rusty_v8_stale_system_clang_gn_output_removed = [bool]$removedStaleV8GnOutput
         mcp_server_recursion_limit_256 = $true
         mcp_server_recursion_limit_text_changed = [bool]$mcpServerRecursionLimitPatched
         rusty_v8_archive_path = $v8ArchivePath

@@ -320,7 +320,6 @@ jobs:
             build-essential \
             ca-certificates \
             ccache \
-            clang-19 \
             cmake \
             curl \
             file \
@@ -329,7 +328,6 @@ jobs:
             libclang-19-dev \
             libc6-dev-i386 \
             libglib2.0-dev \
-            lld-19 \
             make \
             ninja-build \
             perl \
@@ -355,15 +353,15 @@ jobs:
           {
             echo 'V8_FROM_SOURCE=1'
             echo 'PYTHON=python3'
-            echo 'CLANG_BASE_PATH=/usr/lib/llvm-19'
             echo 'LIBCLANG_PATH=/usr/lib/llvm-19/lib'
             echo 'NINJA=/usr/bin/ninja'
             echo 'PRINT_GN_ARGS=1'
             echo 'NUM_JOBS=2'
             echo 'GN_ARGS=v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
           } >> "$GITHUB_ENV"
-          clang-19 --version | head -n 1
           test -d /usr/lib/llvm-19/lib
+          test -z "${CLANG_BASE_PATH:-}"
+          echo "rusty_v8 will download Chromium's matching Clang/Compiler-RT toolchain."
           ninja --version
           python3 --version
 
@@ -377,9 +375,9 @@ jobs:
             ~/.cargo/git
             ~/.cache/ccache
             out/codex-upstream-linux-i686/codex-rs/target
-          key: linux-i686-musl-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/sync-codex-linux-i686-musl.ps1', 'state/latest-linux-i686-musl-sha.txt') }}
+          key: linux-i686-musl-rusty-v8-bundled-clang-v2-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/sync-codex-linux-i686-musl.ps1', 'state/latest-linux-i686-musl-sha.txt') }}
           restore-keys: |
-            linux-i686-musl-cargo-${{ runner.os }}-
+            linux-i686-musl-rusty-v8-bundled-clang-v2-cargo-${{ runner.os }}-
 
       - name: Remove Incomplete Cargo Cache Locks
         shell: pwsh
