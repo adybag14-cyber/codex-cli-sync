@@ -209,6 +209,140 @@ function Get-CargoLockedPackageVersion {
     return $match.Groups['version'].Value
 }
 
+function Get-CargoRegistryCrateSource {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackageName,
+        [Parameter(Mandatory = $true)][string]$Version
+    )
+
+    $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $HOME '.cargo' }
+    $registrySourceRoot = Join-Path $cargoHome 'registry/src'
+    if (-not (Test-Path -LiteralPath $registrySourceRoot -PathType Container)) {
+        throw "Cargo registry source directory not found: $registrySourceRoot"
+    }
+
+    $candidates = @(
+        Get-ChildItem -LiteralPath $registrySourceRoot -Directory -ErrorAction Stop |
+            ForEach-Object {
+                Get-ChildItem -LiteralPath $_.FullName -Directory -Filter "$PackageName-$Version" -ErrorAction SilentlyContinue
+            }
+    )
+    foreach ($candidate in $candidates) {
+        $manifestPath = Join-Path $candidate.FullName 'Cargo.toml'
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            continue
+        }
+        $manifestText = [System.IO.File]::ReadAllText($manifestPath)
+        if ($manifestText -match '(?m)^name\s*=\s*"' + [regex]::Escape($PackageName) + '"\s*$' -and
+            $manifestText -match '(?m)^version\s*=\s*"' + [regex]::Escape($Version) + '"\s*$') {
+            return $candidate.FullName
+        }
+    }
+
+    throw "Could not locate $PackageName $Version in $registrySourceRoot after cargo fetch."
+}
+
+function Restore-RustyV8IcuDataBlob {
+    param(
+        [Parameter(Mandatory = $true)][string]$V8Version,
+        [Parameter(Mandatory = $true)][string]$RustyV8SourceDir
+    )
+
+    $knownMetadata = @{
+        '149.2.0' = [ordered]@{
+            icu_commit = 'ee5f27adc28bd3f15b2c293f726d14d2e336cbd5'
+            git_blob = 'd1a12cb93065157498a11ff5f4b9a6501ee22506'
+            bytes = [int64]10822192
+            sha256 = '1cf67874b5a87a8363a86fb3f81e3cbbed54d389062dab8fb52308d5cf8c8612'
+        }
+    }
+
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rusty-v8-icu-{0}-{1}" -f $V8Version, [guid]::NewGuid().ToString('N'))
+    $rustyV8Repo = Join-Path $tempRoot 'rusty-v8'
+    $icuRepo = Join-Path $tempRoot 'icu'
+    $archivePath = Join-Path $tempRoot 'icu-data.tar'
+    $extractRoot = Join-Path $tempRoot 'extract'
+    $targetPath = Join-Path $RustyV8SourceDir 'third_party/icu/common/icudtl.dat'
+    $restored = $false
+
+    New-Item -ItemType Directory -Force -Path $rustyV8Repo, $icuRepo, $extractRoot | Out-Null
+    try {
+        & git -C $rustyV8Repo init --quiet
+        if ($LASTEXITCODE -ne 0) { throw 'Could not initialise the temporary rusty_v8 metadata repository.' }
+        & git -C $rustyV8Repo remote add origin 'https://github.com/denoland/rusty_v8.git'
+        if ($LASTEXITCODE -ne 0) { throw 'Could not configure the rusty_v8 metadata remote.' }
+        & git -C $rustyV8Repo fetch --quiet --depth 1 origin "refs/tags/v$V8Version"
+        if ($LASTEXITCODE -ne 0) { throw "Could not fetch rusty_v8 tag v$V8Version." }
+
+        $icuTreeEntry = [string](& git -C $rustyV8Repo ls-tree FETCH_HEAD third_party/icu)
+        if ($LASTEXITCODE -ne 0 -or $icuTreeEntry -notmatch '^160000 commit (?<sha>[0-9a-f]{40})\s+third_party/icu$') {
+            throw "Could not resolve the ICU submodule revision from rusty_v8 v$V8Version. Output: $icuTreeEntry"
+        }
+        $icuCommit = $Matches['sha']
+
+        & git -C $icuRepo init --quiet
+        if ($LASTEXITCODE -ne 0) { throw 'Could not initialise the temporary ICU repository.' }
+        & git -C $icuRepo remote add origin 'https://chromium.googlesource.com/chromium/deps/icu.git'
+        if ($LASTEXITCODE -ne 0) { throw 'Could not configure the Chromium ICU remote.' }
+        & git -C $icuRepo fetch --quiet --depth 1 origin $icuCommit
+        if ($LASTEXITCODE -ne 0) { throw "Could not fetch Chromium ICU revision $icuCommit." }
+
+        $expectedGitBlob = ([string](& git -C $icuRepo rev-parse 'FETCH_HEAD:common/icudtl.dat')).Trim()
+        if ($LASTEXITCODE -ne 0 -or $expectedGitBlob -notmatch '^[0-9a-f]{40}$') {
+            throw "Could not resolve common/icudtl.dat at ICU revision $icuCommit."
+        }
+
+        $existingMatches = $false
+        if (Test-Path -LiteralPath $targetPath -PathType Leaf) {
+            $existingGitBlob = ([string](& git hash-object $targetPath)).Trim()
+            $existingMatches = $LASTEXITCODE -eq 0 -and $existingGitBlob -eq $expectedGitBlob
+        }
+
+        if (-not $existingMatches) {
+            & git -C $icuRepo archive --format=tar -o $archivePath FETCH_HEAD common/icudtl.dat
+            if ($LASTEXITCODE -ne 0) { throw "Could not archive common/icudtl.dat from ICU revision $icuCommit." }
+            & tar -xf $archivePath -C $extractRoot
+            if ($LASTEXITCODE -ne 0) { throw 'Could not extract the ICU data archive.' }
+            $extractedPath = Join-Path $extractRoot 'common/icudtl.dat'
+            if (-not (Test-Path -LiteralPath $extractedPath -PathType Leaf)) {
+                throw "Extracted ICU data file not found: $extractedPath"
+            }
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
+            Copy-Item -LiteralPath $extractedPath -Destination $targetPath -Force
+            $restored = $true
+        }
+
+        $actualGitBlob = ([string](& git hash-object $targetPath)).Trim()
+        if ($LASTEXITCODE -ne 0 -or $actualGitBlob -ne $expectedGitBlob) {
+            throw "ICU data Git blob verification failed: expected $expectedGitBlob, got $actualGitBlob"
+        }
+        $item = Get-Item -LiteralPath $targetPath
+        $sha256 = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        if ($knownMetadata.ContainsKey($V8Version)) {
+            $known = $knownMetadata[$V8Version]
+            if ($icuCommit -ne $known.icu_commit -or
+                $actualGitBlob -ne $known.git_blob -or
+                $item.Length -ne $known.bytes -or
+                $sha256 -ne $known.sha256) {
+                throw "Known rusty_v8 $V8Version ICU metadata mismatch. Commit=$icuCommit Blob=$actualGitBlob Bytes=$($item.Length) SHA256=$sha256"
+            }
+        }
+
+        Write-Host "Verified rusty_v8 $V8Version ICU data: commit=$icuCommit blob=$actualGitBlob bytes=$($item.Length) sha256=$sha256 restored=$restored"
+        return [pscustomobject]@{
+            path = $targetPath
+            restored = $restored
+            icu_commit = $icuCommit
+            git_blob = $actualGitBlob
+            bytes = [int64]$item.Length
+            sha256 = $sha256
+        }
+    } finally {
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Enable-I686MuslRustyV8SourceBuild {
     param([Parameter(Mandatory = $true)][string]$CodexRsDir)
 
@@ -505,6 +639,12 @@ try {
         throw "cargo clean for openssl-sys failed with exit code $LASTEXITCODE"
     }
 
+    cargo fetch --locked --target $LinuxTarget
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo fetch failed with exit code $LASTEXITCODE"
+    }
+    $rustyV8SourceDir = Get-CargoRegistryCrateSource -PackageName 'v8' -Version $rustyV8Version
+    $rustyV8IcuData = Restore-RustyV8IcuDataBlob -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
     $removedStaleV8GnOutput = Remove-StaleRustyV8GnOutput -CodexRsDir $codexRsDir -Target $LinuxTarget
     cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
@@ -656,6 +796,12 @@ $manifest = [ordered]@{
         rusty_v8_compiler_toolchain = "Chromium bundled Clang/Compiler-RT"
         rusty_v8_clang_base_path_forced = $false
         rusty_v8_stale_system_clang_gn_output_removed = [bool]$removedStaleV8GnOutput
+        rusty_v8_icu_data_path = $rustyV8IcuData.path
+        rusty_v8_icu_data_restored = [bool]$rustyV8IcuData.restored
+        rusty_v8_icu_revision = $rustyV8IcuData.icu_commit
+        rusty_v8_icu_git_blob = $rustyV8IcuData.git_blob
+        rusty_v8_icu_bytes = [int64]$rustyV8IcuData.bytes
+        rusty_v8_icu_sha256 = $rustyV8IcuData.sha256
         mcp_server_recursion_limit_256 = $true
         mcp_server_recursion_limit_text_changed = [bool]$mcpServerRecursionLimitPatched
         rusty_v8_archive_path = $v8ArchivePath
