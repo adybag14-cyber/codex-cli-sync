@@ -343,6 +343,159 @@ function Restore-RustyV8IcuDataBlob {
     }
 }
 
+function Restore-RustyV8ChromiumRustVendor {
+    param(
+        [Parameter(Mandatory = $true)][string]$V8Version,
+        [Parameter(Mandatory = $true)][string]$RustyV8SourceDir
+    )
+
+    $knownMetadata = @{
+        '149.2.0' = [ordered]@{
+            rust_commit = '2b055f4ecac78bbf34a0d34217c699b7b09b44dd'
+            vendor_tree = '2d3dd155f076c848a7311679d0015524e338c937'
+            files = 9548
+        }
+    }
+
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rusty-v8-rust-vendor-{0}-{1}" -f $V8Version, [guid]::NewGuid().ToString('N'))
+    $rustyV8Repo = Join-Path $tempRoot 'rusty-v8'
+    $chromiumRustRepo = Join-Path $tempRoot 'chromium-rust'
+    $archivePath = Join-Path $tempRoot 'chromium-rust-vendor.tar'
+    $extractRoot = Join-Path $tempRoot 'extract'
+    $targetRustRoot = Join-Path $RustyV8SourceDir 'third_party/rust'
+    $targetVendor = Join-Path $targetRustRoot 'chromium_crates_io/vendor'
+    $markerPath = Join-Path $RustyV8SourceDir '.codex-cli-sync-rust-vendor.json'
+    $restored = $false
+
+    $sentinels = @(
+        'chromium_crates_io/vendor/icu_calendar_data-v2/build.rs',
+        'chromium_crates_io/vendor/cxx-v1/include/cxx.h',
+        'chromium_crates_io/vendor/serde-v1/src/lib.rs'
+    )
+
+    New-Item -ItemType Directory -Force -Path $rustyV8Repo, $chromiumRustRepo, $extractRoot | Out-Null
+    try {
+        & git -C $rustyV8Repo init --quiet
+        if ($LASTEXITCODE -ne 0) { throw 'Could not initialise the temporary rusty_v8 metadata repository for Chromium Rust.' }
+        & git -C $rustyV8Repo remote add origin 'https://github.com/denoland/rusty_v8.git'
+        if ($LASTEXITCODE -ne 0) { throw 'Could not configure the rusty_v8 metadata remote for Chromium Rust.' }
+        & git -C $rustyV8Repo fetch --quiet --depth 1 origin "refs/tags/v$V8Version"
+        if ($LASTEXITCODE -ne 0) { throw "Could not fetch rusty_v8 tag v$V8Version for Chromium Rust metadata." }
+
+        $rustTreeEntry = [string](& git -C $rustyV8Repo ls-tree FETCH_HEAD third_party/rust)
+        if ($LASTEXITCODE -ne 0 -or $rustTreeEntry -notmatch '^160000 commit (?<sha>[0-9a-f]{40})\s+third_party/rust$') {
+            throw "Could not resolve the Chromium Rust submodule revision from rusty_v8 v$V8Version. Output: $rustTreeEntry"
+        }
+        $rustCommit = $Matches['sha']
+
+        & git -C $chromiumRustRepo init --quiet
+        if ($LASTEXITCODE -ne 0) { throw 'Could not initialise the temporary Chromium Rust repository.' }
+        & git -C $chromiumRustRepo remote add origin 'https://chromium.googlesource.com/chromium/src/third_party/rust'
+        if ($LASTEXITCODE -ne 0) { throw 'Could not configure the Chromium Rust remote.' }
+        & git -C $chromiumRustRepo fetch --quiet --depth 1 --filter=blob:none origin $rustCommit
+        if ($LASTEXITCODE -ne 0) { throw "Could not fetch Chromium Rust revision $rustCommit." }
+
+        $vendorTree = ([string](& git -C $chromiumRustRepo rev-parse 'FETCH_HEAD:chromium_crates_io/vendor')).Trim()
+        if ($LASTEXITCODE -ne 0 -or $vendorTree -notmatch '^[0-9a-f]{40}$') {
+            throw "Could not resolve chromium_crates_io/vendor at Chromium Rust revision $rustCommit."
+        }
+        $vendorFileCount = @(& git -C $chromiumRustRepo ls-tree -r --name-only FETCH_HEAD chromium_crates_io/vendor).Count
+        if ($LASTEXITCODE -ne 0 -or $vendorFileCount -lt 1) {
+            throw "Chromium Rust vendor tree $vendorTree is empty."
+        }
+
+        if ($knownMetadata.ContainsKey($V8Version)) {
+            $known = $knownMetadata[$V8Version]
+            if ($rustCommit -ne $known.rust_commit -or $vendorTree -ne $known.vendor_tree -or $vendorFileCount -ne $known.files) {
+                throw "Known rusty_v8 $V8Version Chromium Rust metadata mismatch. Commit=$rustCommit Tree=$vendorTree Files=$vendorFileCount"
+            }
+        }
+
+        $markerMatches = $false
+        $marker = $null
+        if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
+            try {
+                $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+                $markerMatches =
+                    $marker.v8_version -eq $V8Version -and
+                    $marker.rust_commit -eq $rustCommit -and
+                    $marker.vendor_tree -eq $vendorTree -and
+                    [int]$marker.files -eq $vendorFileCount
+            } catch {
+                $markerMatches = $false
+            }
+        }
+        foreach ($sentinel in $sentinels) {
+            if (-not (Test-Path -LiteralPath (Join-Path $targetRustRoot $sentinel) -PathType Leaf)) {
+                $markerMatches = $false
+            }
+        }
+
+        $archiveSha256 = if ($markerMatches -and $marker.PSObject.Properties['archive_sha256']) { [string]$marker.archive_sha256 } else { $null }
+        $archiveBytes = if ($markerMatches -and $marker.PSObject.Properties['archive_bytes']) { [int64]$marker.archive_bytes } else { [int64]0 }
+        if (-not $markerMatches) {
+            & git -C $chromiumRustRepo archive --format=tar -o $archivePath FETCH_HEAD chromium_crates_io/vendor
+            if ($LASTEXITCODE -ne 0) { throw "Could not archive Chromium Rust vendor tree $vendorTree." }
+            $archiveItem = Get-Item -LiteralPath $archivePath
+            $archiveBytes = [int64]$archiveItem.Length
+            $archiveSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            & tar -xf $archivePath -C $extractRoot
+            if ($LASTEXITCODE -ne 0) { throw 'Could not extract the Chromium Rust vendor archive.' }
+            $extractedVendor = Join-Path $extractRoot 'chromium_crates_io/vendor'
+            if (-not (Test-Path -LiteralPath $extractedVendor -PathType Container)) {
+                throw "Extracted Chromium Rust vendor directory not found: $extractedVendor"
+            }
+            Remove-Item -LiteralPath $targetVendor -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetVendor) | Out-Null
+            Move-Item -LiteralPath $extractedVendor -Destination $targetVendor
+            $restored = $true
+        }
+
+        $sentinelBlobs = [ordered]@{}
+        foreach ($sentinel in $sentinels) {
+            $targetPath = Join-Path $targetRustRoot $sentinel
+            if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
+                throw "Chromium Rust vendor sentinel is missing after restoration: $targetPath"
+            }
+            $expectedBlob = ([string](& git -C $chromiumRustRepo rev-parse "FETCH_HEAD:$sentinel")).Trim()
+            $actualBlob = ([string](& git hash-object $targetPath)).Trim()
+            if ($LASTEXITCODE -ne 0 -or $actualBlob -ne $expectedBlob) {
+                throw "Chromium Rust vendor sentinel verification failed for $sentinel. Expected=$expectedBlob Actual=$actualBlob"
+            }
+            $sentinelBlobs[$sentinel] = $actualBlob
+        }
+
+        $markerData = [ordered]@{
+            v8_version = $V8Version
+            rust_commit = $rustCommit
+            vendor_tree = $vendorTree
+            files = $vendorFileCount
+            archive_bytes = $archiveBytes
+            archive_sha256 = $archiveSha256
+            sentinel_blobs = $sentinelBlobs
+        }
+        [System.IO.File]::WriteAllText(
+            $markerPath,
+            ($markerData | ConvertTo-Json -Depth 8),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+
+        Write-Host "Verified rusty_v8 $V8Version Chromium Rust vendor: commit=$rustCommit tree=$vendorTree files=$vendorFileCount restored=$restored"
+        return [pscustomobject]@{
+            path = $targetVendor
+            restored = $restored
+            rust_commit = $rustCommit
+            vendor_tree = $vendorTree
+            files = $vendorFileCount
+            archive_bytes = $archiveBytes
+            archive_sha256 = $archiveSha256
+            sentinel_blobs = $sentinelBlobs
+        }
+    } finally {
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Enable-I686MuslRustyV8SourceBuild {
     param([Parameter(Mandatory = $true)][string]$CodexRsDir)
 
@@ -645,6 +798,7 @@ try {
     }
     $rustyV8SourceDir = Get-CargoRegistryCrateSource -PackageName 'v8' -Version $rustyV8Version
     $rustyV8IcuData = Restore-RustyV8IcuDataBlob -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
+    $rustyV8RustVendor = Restore-RustyV8ChromiumRustVendor -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
     $removedStaleV8GnOutput = Remove-StaleRustyV8GnOutput -CodexRsDir $codexRsDir -Target $LinuxTarget
     cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
@@ -802,6 +956,14 @@ $manifest = [ordered]@{
         rusty_v8_icu_git_blob = $rustyV8IcuData.git_blob
         rusty_v8_icu_bytes = [int64]$rustyV8IcuData.bytes
         rusty_v8_icu_sha256 = $rustyV8IcuData.sha256
+        rusty_v8_chromium_rust_vendor_path = $rustyV8RustVendor.path
+        rusty_v8_chromium_rust_vendor_restored = [bool]$rustyV8RustVendor.restored
+        rusty_v8_chromium_rust_revision = $rustyV8RustVendor.rust_commit
+        rusty_v8_chromium_rust_vendor_tree = $rustyV8RustVendor.vendor_tree
+        rusty_v8_chromium_rust_vendor_files = [int]$rustyV8RustVendor.files
+        rusty_v8_chromium_rust_vendor_archive_bytes = [int64]$rustyV8RustVendor.archive_bytes
+        rusty_v8_chromium_rust_vendor_archive_sha256 = $rustyV8RustVendor.archive_sha256
+        rusty_v8_chromium_rust_vendor_sentinel_blobs = $rustyV8RustVendor.sentinel_blobs
         mcp_server_recursion_limit_256 = $true
         mcp_server_recursion_limit_text_changed = [bool]$mcpServerRecursionLimitPatched
         rusty_v8_archive_path = $v8ArchivePath

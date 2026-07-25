@@ -375,9 +375,9 @@ jobs:
             ~/.cargo/git
             ~/.cache/ccache
             out/codex-upstream-linux-i686/codex-rs/target
-          key: linux-i686-musl-rusty-v8-icu-v3-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/sync-codex-linux-i686-musl.ps1', 'state/latest-linux-i686-musl-sha.txt') }}
+          key: linux-i686-musl-rusty-v8-vendor-v4-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/sync-codex-linux-i686-musl.ps1', 'state/latest-linux-i686-musl-sha.txt') }}
           restore-keys: |
-            linux-i686-musl-rusty-v8-icu-v3-cargo-${{ runner.os }}-
+            linux-i686-musl-rusty-v8-vendor-v4-cargo-${{ runner.os }}-
 
       - name: Remove Incomplete Cargo Cache Locks
         shell: pwsh
