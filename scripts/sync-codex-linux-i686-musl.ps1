@@ -10,6 +10,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "Patch-RustyV8I686Abi.ps1")
 
 if ($LinuxTarget -ne "i686-unknown-linux-musl") {
     throw "Unsupported Linux target: $LinuxTarget"
@@ -799,6 +800,7 @@ try {
     $rustyV8SourceDir = Get-CargoRegistryCrateSource -PackageName 'v8' -Version $rustyV8Version
     $rustyV8IcuData = Restore-RustyV8IcuDataBlob -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
     $rustyV8RustVendor = Restore-RustyV8ChromiumRustVendor -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
+    $rustyV8I686Abi = Patch-RustyV8I686Abi -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
     $removedStaleV8GnOutput = Remove-StaleRustyV8GnOutput -CodexRsDir $codexRsDir -Target $LinuxTarget
     cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
@@ -964,6 +966,7 @@ $manifest = [ordered]@{
         rusty_v8_chromium_rust_vendor_archive_bytes = [int64]$rustyV8RustVendor.archive_bytes
         rusty_v8_chromium_rust_vendor_archive_sha256 = $rustyV8RustVendor.archive_sha256
         rusty_v8_chromium_rust_vendor_sentinel_blobs = $rustyV8RustVendor.sentinel_blobs
+        rusty_v8_i686_abi_patch = $rustyV8I686Abi
         mcp_server_recursion_limit_256 = $true
         mcp_server_recursion_limit_text_changed = [bool]$mcpServerRecursionLimitPatched
         rusty_v8_archive_path = $v8ArchivePath
