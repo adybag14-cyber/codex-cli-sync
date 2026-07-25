@@ -315,17 +315,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo 'deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main' \
+            | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential \
             ca-certificates \
             ccache \
+            clang-21 \
             cmake \
             curl \
             file \
             gcc-multilib \
             gzip \
-            libclang-19-dev \
+            libclang-21-dev \
             libc6-dev-i386 \
             libglib2.0-dev \
             make \
@@ -353,15 +358,16 @@ jobs:
           {
             echo 'V8_FROM_SOURCE=1'
             echo 'PYTHON=python3'
-            echo 'LIBCLANG_PATH=/usr/lib/llvm-19/lib'
+            echo 'LIBCLANG_PATH=/usr/lib/llvm-21/lib'
             echo 'NINJA=/usr/bin/ninja'
             echo 'PRINT_GN_ARGS=1'
             echo 'NUM_JOBS=2'
             echo 'GN_ARGS=v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
           } >> "$GITHUB_ENV"
-          test -d /usr/lib/llvm-19/lib
+          test -f /usr/lib/llvm-21/lib/libclang.so
           test -z "${CLANG_BASE_PATH:-}"
-          echo "rusty_v8 will download Chromium's matching Clang/Compiler-RT toolchain."
+          clang-21 --version
+          echo "bindgen will use LLVM 21 libclang; rusty_v8 native code will use Chromium's matching Clang/Compiler-RT toolchain."
           ninja --version
           python3 --version
 
