@@ -158,6 +158,19 @@ function Patch-RustyV8I686Abi {
         '      clang_args.push(format!("-isystem{}", include_path.display()));'
         '    }'
         ''
+        '    let musl_stdint = zig_lib_dir.join("libc/include/generic-musl/stdint.h");'
+        '    assert!('
+        '      musl_stdint.is_file(),'
+        '      "missing Zig musl stdint header: {}",'
+        '      musl_stdint.display()'
+        '    );'
+        '    clang_args.push("-include".to_string());'
+        '    clang_args.push(musl_stdint.display().to_string());'
+        '    eprintln!('
+        '      "rusty_v8 bindgen: force-including {}",'
+        '      musl_stdint.display()'
+        '    );'
+        ''
         '    let cargo_target = env::var("TARGET").unwrap();'
         '    for name in ['
         '      "BINDGEN_EXTRA_CLANG_ARGS".to_string(),'
@@ -197,6 +210,19 @@ function Patch-RustyV8I686Abi {
             '      clang_args.push(format!("-isystem{}", include_path.display()));'
             '    }'
             ''
+            '    let musl_stdint = zig_lib_dir.join("libc/include/generic-musl/stdint.h");'
+            '    assert!('
+            '      musl_stdint.is_file(),'
+            '      "missing Zig musl stdint header: {}",'
+            '      musl_stdint.display()'
+            '    );'
+            '    clang_args.push("-include".to_string());'
+            '    clang_args.push(musl_stdint.display().to_string());'
+            '    eprintln!('
+            '      "rusty_v8 bindgen: force-including {}",'
+            '      musl_stdint.display()'
+            '    );'
+            ''
             '    let cargo_target = env::var("TARGET").unwrap();'
             '    for name in ['
             '      "BINDGEN_EXTRA_CLANG_ARGS".to_string(),'
@@ -221,6 +247,31 @@ function Patch-RustyV8I686Abi {
         $buildRs = $buildRs.Replace($clearArgsAnchor, $clearArgsPatch)
     }
 
+    $forceStdintMarker = 'rusty_v8 bindgen: force-including {}'
+    if (-not $buildRs.Contains($forceStdintMarker)) {
+        $forceStdintAnchor = '    let cargo_target = env::var("TARGET").unwrap();'
+        $forceStdintPatch = @(
+            '    let musl_stdint = zig_lib_dir.join("libc/include/generic-musl/stdint.h");'
+            '    assert!('
+            '      musl_stdint.is_file(),'
+            '      "missing Zig musl stdint header: {}",'
+            '      musl_stdint.display()'
+            '    );'
+            '    clang_args.push("-include".to_string());'
+            '    clang_args.push(musl_stdint.display().to_string());'
+            '    eprintln!('
+            '      "rusty_v8 bindgen: force-including {}",'
+            '      musl_stdint.display()'
+            '    );'
+            ''
+            '    let cargo_target = env::var("TARGET").unwrap();'
+        ) -join "`n"
+        if (-not $buildRs.Contains($forceStdintAnchor)) {
+            throw "rusty_v8 forced musl stdint contract changed: $buildRsPath"
+        }
+        $buildRs = $buildRs.Replace($forceStdintAnchor, $forceStdintPatch)
+    }
+
     [System.IO.File]::WriteAllText($buildRsPath, $buildRs, [System.Text.UTF8Encoding]::new($false))
 
     foreach ($check in @(
@@ -232,14 +283,16 @@ function Patch-RustyV8I686Abi {
         @{ Path = $buildRsPath; Needle = 'env::var("RUSTY_V8_ZIG_LIB_DIR")' },
         @{ Path = $buildRsPath; Needle = 'libc/include/x86-linux-musl' },
         @{ Path = $buildRsPath; Needle = 'env::remove_var(name)' },
-        @{ Path = $buildRsPath; Needle = 'without cargo-zigbuild trailing arguments' }
+        @{ Path = $buildRsPath; Needle = 'without cargo-zigbuild trailing arguments' },
+        @{ Path = $buildRsPath; Needle = 'clang_args.push("-include".to_string())' },
+        @{ Path = $buildRsPath; Needle = 'force-including {}' }
     )) {
         if (-not [System.IO.File]::ReadAllText($check.Path).Contains($check.Needle)) {
             throw "rusty_v8 i686 ABI patch verification failed: $($check.Path) missing $($check.Needle)"
         }
     }
 
-    Write-Host "Patched rusty_v8 $V8Version for i686 ABI sizes, cppgc alignment, and direct Zig-musl bindgen headers."
+    Write-Host "Patched rusty_v8 $V8Version for i686 ABI sizes, cppgc alignment, and deterministic Zig-musl bindgen headers."
     return [pscustomobject]@{
         v8_version = $V8Version
         i686_compilation_details_bytes = 20
@@ -247,6 +300,7 @@ function Patch-RustyV8I686Abi {
         i686_cppgc_max_alignment = 8
         i686_bindgen_direct_zig_musl_headers = $true
         i686_bindgen_cargo_zigbuild_args_cleared = $true
+        i686_bindgen_forced_musl_stdint = $true
         x64_compilation_details_bytes = 24
         x64_source_bytes = 104
         x64_cppgc_max_alignment = 16
