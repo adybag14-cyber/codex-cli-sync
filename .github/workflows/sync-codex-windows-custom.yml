@@ -355,6 +355,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          zig_lib_dir="$(dirname "$(readlink -f "$(command -v zig)")")/lib"
+          bindgen_args='--target=i386-unknown-linux-musl -nostdinc'
+          for include_dir in \
+            include \
+            libc/include/x86-linux-musl \
+            libc/include/generic-musl \
+            libc/include/x86-linux-any \
+            libc/include/any-linux-any
+          do
+            test -d "$zig_lib_dir/$include_dir"
+            bindgen_args="$bindgen_args -isystem$zig_lib_dir/$include_dir"
+          done
           {
             echo 'V8_FROM_SOURCE=1'
             echo 'PYTHON=python3'
@@ -363,11 +375,13 @@ jobs:
             echo 'PRINT_GN_ARGS=1'
             echo 'NUM_JOBS=2'
             echo 'GN_ARGS=v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
+            echo "BINDGEN_EXTRA_CLANG_ARGS=$bindgen_args"
           } >> "$GITHUB_ENV"
           test -f /usr/lib/llvm-21/lib/libclang.so
           test -z "${CLANG_BASE_PATH:-}"
           clang-21 --version
-          echo "bindgen will use LLVM 21 libclang; rusty_v8 native code will use Chromium's matching Clang/Compiler-RT toolchain."
+          echo "bindgen will use LLVM 21 plus Zig's i686 musl headers; rusty_v8 native code will use Chromium's matching Clang/Compiler-RT toolchain."
+          echo "bindgen extra args: $bindgen_args"
           ninja --version
           python3 --version
 
