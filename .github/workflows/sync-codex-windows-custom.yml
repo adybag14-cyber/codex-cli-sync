@@ -356,7 +356,6 @@ jobs:
         run: |
           set -euo pipefail
           zig_lib_dir="$(dirname "$(readlink -f "$(command -v zig)")")/lib"
-          bindgen_args='--target=i386-unknown-linux-musl -nostdinc'
           for include_dir in \
             include \
             libc/include/x86-linux-musl \
@@ -365,7 +364,6 @@ jobs:
             libc/include/any-linux-any
           do
             test -d "$zig_lib_dir/$include_dir"
-            bindgen_args="$bindgen_args -isystem$zig_lib_dir/$include_dir"
           done
           {
             echo 'V8_FROM_SOURCE=1'
@@ -374,16 +372,14 @@ jobs:
             echo 'NINJA=/usr/bin/ninja'
             echo 'PRINT_GN_ARGS=1'
             echo 'NUM_JOBS=2'
-            echo 'GN_ARGS=v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
-            echo "BINDGEN_EXTRA_CLANG_ARGS=$bindgen_args"
-            echo "BINDGEN_EXTRA_CLANG_ARGS_i686-unknown-linux-musl=$bindgen_args"
-            echo "BINDGEN_EXTRA_CLANG_ARGS_i686_unknown_linux_musl=$bindgen_args"
+            echo 'GN_ARGS=v8_target_cpu=\"x86\" use_sysroot=false treat_warnings_as_errors=false'
+            echo "RUSTY_V8_ZIG_LIB_DIR=$zig_lib_dir"
           } >> "$GITHUB_ENV"
           test -f /usr/lib/llvm-21/lib/libclang.so
           test -z "${CLANG_BASE_PATH:-}"
           clang-21 --version
-          echo "bindgen will use LLVM 21 plus Zig's i686 musl headers; rusty_v8 native code will use Chromium's matching Clang/Compiler-RT toolchain."
-          echo "bindgen extra args: $bindgen_args"
+          echo "rusty_v8 build.rs will inject Zig's i686 musl headers directly into bindgen; native code will use Chromium's matching Clang/Compiler-RT toolchain."
+          echo "Zig library directory: $zig_lib_dir"
           ninja --version
           python3 --version
 
@@ -391,10 +387,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          exact_args="$(printenv 'BINDGEN_EXTRA_CLANG_ARGS_i686-unknown-linux-musl')"
-          test "$exact_args" = "$BINDGEN_EXTRA_CLANG_ARGS"
-          test "$BINDGEN_EXTRA_CLANG_ARGS_i686_unknown_linux_musl" = "$BINDGEN_EXTRA_CLANG_ARGS"
-          echo "target-specific bindgen arguments are active"
+          test -d "$RUSTY_V8_ZIG_LIB_DIR/libc/include/x86-linux-musl"
+          test -d "$RUSTY_V8_ZIG_LIB_DIR/libc/include/generic-musl"
+          echo "direct rusty_v8 Zig-musl bindgen environment is active"
 
       - name: Restore Linux i686 Cargo Cache
         id: linux-i686-cargo-cache-restore

@@ -14,7 +14,8 @@ function Patch-RustyV8I686Abi {
     $bindingPath = Join-Path $RustyV8SourceDir "src/binding.cc"
     $compilerPath = Join-Path $RustyV8SourceDir "src/script_compiler.rs"
     $cppgcPath = Join-Path $RustyV8SourceDir "src/cppgc.rs"
-    foreach ($path in @($bindingPath, $compilerPath, $cppgcPath)) {
+    $buildRsPath = Join-Path $RustyV8SourceDir "build.rs"
+    foreach ($path in @($bindingPath, $compilerPath, $cppgcPath, $buildRsPath)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "Required rusty_v8 ABI source file not found: $path"
         }
@@ -114,24 +115,83 @@ function Patch-RustyV8I686Abi {
 
     [System.IO.File]::WriteAllText($cppgcPath, $cppgc, [System.Text.UTF8Encoding]::new($false))
 
+    $buildRs = [System.IO.File]::ReadAllText($buildRsPath).Replace("`r`n", "`n")
+    $envAnchor = '    "RUSTY_V8_SRC_BINDING_PATH",'
+    $envLine = '    "RUSTY_V8_ZIG_LIB_DIR",'
+    if (-not $buildRs.Contains($envLine)) {
+        if (-not $buildRs.Contains($envAnchor)) {
+            throw "rusty_v8 build environment contract changed: $buildRsPath"
+        }
+        $buildRs = $buildRs.Replace($envAnchor, "$envAnchor`n$envLine")
+    }
+
+    $bindgenAnchor = @(
+        '  }'
+        ''
+        '  let bindings = bindgen::Builder::default()'
+    ) -join "`n"
+    $bindgenPatch = @(
+        '  }'
+        ''
+        '  let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();'
+        '  let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();'
+        '  if target_os == "linux" && target_arch == "x86" && target_env == "musl" {'
+        '    let zig_lib_dir = PathBuf::from('
+        '      env::var("RUSTY_V8_ZIG_LIB_DIR")'
+        '        .expect("RUSTY_V8_ZIG_LIB_DIR must be set for i686 musl bindgen"),'
+        '    );'
+        '    clang_args.push("--target=i386-unknown-linux-musl".to_string());'
+        '    clang_args.push("-nostdinc".to_string());'
+        '    for include_dir in ['
+        '      "include",'
+        '      "libc/include/x86-linux-musl",'
+        '      "libc/include/generic-musl",'
+        '      "libc/include/x86-linux-any",'
+        '      "libc/include/any-linux-any",'
+        '    ] {'
+        '      let include_path = zig_lib_dir.join(include_dir);'
+        '      assert!('
+        '        include_path.is_dir(),'
+        '        "missing Zig musl bindgen include directory: {}",'
+        '        include_path.display()'
+        '      );'
+        '      clang_args.push(format!("-isystem{}", include_path.display()));'
+        '    }'
+        '  }'
+        ''
+        '  let bindings = bindgen::Builder::default()'
+    ) -join "`n"
+
+    if (-not $buildRs.Contains('env::var("RUSTY_V8_ZIG_LIB_DIR")')) {
+        if (-not $buildRs.Contains($bindgenAnchor)) {
+            throw "rusty_v8 bindgen argument contract changed: $buildRsPath"
+        }
+        $buildRs = $buildRs.Replace($bindgenAnchor, $bindgenPatch)
+    }
+
+    [System.IO.File]::WriteAllText($buildRsPath, $buildRs, [System.Text.UTF8Encoding]::new($false))
+
     foreach ($check in @(
         @{ Path = $bindingPath; Needle = 'sizeof(v8::ScriptCompiler::CompilationDetails) == 20' },
         @{ Path = $bindingPath; Needle = 'sizeof(v8::ScriptCompiler::Source) == 64' },
         @{ Path = $bindingPath; Needle = "#if INTPTR_MAX == INT64_MAX`nclass alignas(16) RustObjButAlign16" },
         @{ Path = $compilerPath; Needle = '_compilation_details: CompilationDetailsLayout' },
-        @{ Path = $cppgcPath; Needle = 'cfg!(target_pointer_width = "64")' }
+        @{ Path = $cppgcPath; Needle = 'cfg!(target_pointer_width = "64")' },
+        @{ Path = $buildRsPath; Needle = 'env::var("RUSTY_V8_ZIG_LIB_DIR")' },
+        @{ Path = $buildRsPath; Needle = 'libc/include/x86-linux-musl' }
     )) {
         if (-not [System.IO.File]::ReadAllText($check.Path).Contains($check.Needle)) {
             throw "rusty_v8 i686 ABI patch verification failed: $($check.Path) missing $($check.Needle)"
         }
     }
 
-    Write-Host "Patched rusty_v8 $V8Version for i686 ABI sizes and cppgc alignment."
+    Write-Host "Patched rusty_v8 $V8Version for i686 ABI sizes, cppgc alignment, and direct Zig-musl bindgen headers."
     return [pscustomobject]@{
         v8_version = $V8Version
         i686_compilation_details_bytes = 20
         i686_source_bytes = 64
         i686_cppgc_max_alignment = 8
+        i686_bindgen_direct_zig_musl_headers = $true
         x64_compilation_details_bytes = 24
         x64_source_bytes = 104
         x64_cppgc_max_alignment = 16
