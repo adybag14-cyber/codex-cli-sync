@@ -376,6 +376,8 @@ jobs:
             echo 'NUM_JOBS=2'
             echo 'GN_ARGS=v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
             echo "BINDGEN_EXTRA_CLANG_ARGS=$bindgen_args"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_i686-unknown-linux-musl=$bindgen_args"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_i686_unknown_linux_musl=$bindgen_args"
           } >> "$GITHUB_ENV"
           test -f /usr/lib/llvm-21/lib/libclang.so
           test -z "${CLANG_BASE_PATH:-}"
@@ -384,6 +386,15 @@ jobs:
           echo "bindgen extra args: $bindgen_args"
           ninja --version
           python3 --version
+
+      - name: Verify Linux i686 Bindgen Environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          exact_args="$(printenv 'BINDGEN_EXTRA_CLANG_ARGS_i686-unknown-linux-musl')"
+          test "$exact_args" = "$BINDGEN_EXTRA_CLANG_ARGS"
+          test "$BINDGEN_EXTRA_CLANG_ARGS_i686_unknown_linux_musl" = "$BINDGEN_EXTRA_CLANG_ARGS"
+          echo "target-specific bindgen arguments are active"
 
       - name: Restore Linux i686 Cargo Cache
         id: linux-i686-cargo-cache-restore
