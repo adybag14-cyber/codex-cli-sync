@@ -372,7 +372,7 @@ jobs:
             echo 'NINJA=/usr/bin/ninja'
             echo 'PRINT_GN_ARGS=1'
             echo 'NUM_JOBS=2'
-            echo 'GN_ARGS=v8_target_cpu=\"x86\" use_sysroot=false treat_warnings_as_errors=false'
+            echo 'GN_ARGS=v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
             echo "RUSTY_V8_ZIG_LIB_DIR=$zig_lib_dir"
           } >> "$GITHUB_ENV"
           test -f /usr/lib/llvm-21/lib/libclang.so
@@ -387,6 +387,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$GN_ARGS" = 'v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
           test -d "$RUSTY_V8_ZIG_LIB_DIR/libc/include/x86-linux-musl"
           test -d "$RUSTY_V8_ZIG_LIB_DIR/libc/include/generic-musl"
           echo "direct rusty_v8 Zig-musl bindgen environment is active"
