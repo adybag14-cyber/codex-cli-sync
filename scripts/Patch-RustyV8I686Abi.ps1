@@ -157,6 +157,21 @@ function Patch-RustyV8I686Abi {
         '      );'
         '      clang_args.push(format!("-isystem{}", include_path.display()));'
         '    }'
+        ''
+        '    let cargo_target = env::var("TARGET").unwrap();'
+        '    for name in ['
+        '      "BINDGEN_EXTRA_CLANG_ARGS".to_string(),'
+        '      format!("BINDGEN_EXTRA_CLANG_ARGS_{cargo_target}"),'
+        '      format!('
+        '        "BINDGEN_EXTRA_CLANG_ARGS_{}",'
+        '        cargo_target.replace(''-'', "_")'
+        '      ),'
+        '    ] {'
+        '      unsafe { env::remove_var(name) };'
+        '    }'
+        '    eprintln!('
+        '      "rusty_v8 bindgen: using direct Zig musl headers without cargo-zigbuild trailing arguments"'
+        '    );'
         '  }'
         ''
         '  let bindings = bindgen::Builder::default()'
@@ -169,6 +184,43 @@ function Patch-RustyV8I686Abi {
         $buildRs = $buildRs.Replace($bindgenAnchor, $bindgenPatch)
     }
 
+    $clearArgsMarker = 'rusty_v8 bindgen: using direct Zig musl headers without cargo-zigbuild trailing arguments'
+    if (-not $buildRs.Contains($clearArgsMarker)) {
+        $clearArgsAnchor = @(
+            '      clang_args.push(format!("-isystem{}", include_path.display()));'
+            '    }'
+            '  }'
+            ''
+            '  let bindings = bindgen::Builder::default()'
+        ) -join "`n"
+        $clearArgsPatch = @(
+            '      clang_args.push(format!("-isystem{}", include_path.display()));'
+            '    }'
+            ''
+            '    let cargo_target = env::var("TARGET").unwrap();'
+            '    for name in ['
+            '      "BINDGEN_EXTRA_CLANG_ARGS".to_string(),'
+            '      format!("BINDGEN_EXTRA_CLANG_ARGS_{cargo_target}"),'
+            '      format!('
+            '        "BINDGEN_EXTRA_CLANG_ARGS_{}",'
+            '        cargo_target.replace(''-'', "_")'
+            '      ),'
+            '    ] {'
+            '      unsafe { env::remove_var(name) };'
+            '    }'
+            '    eprintln!('
+            '      "rusty_v8 bindgen: using direct Zig musl headers without cargo-zigbuild trailing arguments"'
+            '    );'
+            '  }'
+            ''
+            '  let bindings = bindgen::Builder::default()'
+        ) -join "`n"
+        if (-not $buildRs.Contains($clearArgsAnchor)) {
+            throw "rusty_v8 cargo-zigbuild bindgen environment contract changed: $buildRsPath"
+        }
+        $buildRs = $buildRs.Replace($clearArgsAnchor, $clearArgsPatch)
+    }
+
     [System.IO.File]::WriteAllText($buildRsPath, $buildRs, [System.Text.UTF8Encoding]::new($false))
 
     foreach ($check in @(
@@ -178,7 +230,9 @@ function Patch-RustyV8I686Abi {
         @{ Path = $compilerPath; Needle = '_compilation_details: CompilationDetailsLayout' },
         @{ Path = $cppgcPath; Needle = 'cfg!(target_pointer_width = "64")' },
         @{ Path = $buildRsPath; Needle = 'env::var("RUSTY_V8_ZIG_LIB_DIR")' },
-        @{ Path = $buildRsPath; Needle = 'libc/include/x86-linux-musl' }
+        @{ Path = $buildRsPath; Needle = 'libc/include/x86-linux-musl' },
+        @{ Path = $buildRsPath; Needle = 'env::remove_var(name)' },
+        @{ Path = $buildRsPath; Needle = 'without cargo-zigbuild trailing arguments' }
     )) {
         if (-not [System.IO.File]::ReadAllText($check.Path).Contains($check.Needle)) {
             throw "rusty_v8 i686 ABI patch verification failed: $($check.Path) missing $($check.Needle)"
@@ -192,6 +246,7 @@ function Patch-RustyV8I686Abi {
         i686_source_bytes = 64
         i686_cppgc_max_alignment = 8
         i686_bindgen_direct_zig_musl_headers = $true
+        i686_bindgen_cargo_zigbuild_args_cleared = $true
         x64_compilation_details_bytes = 24
         x64_source_bytes = 104
         x64_cppgc_max_alignment = 16
