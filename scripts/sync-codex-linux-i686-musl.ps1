@@ -557,17 +557,20 @@ function Remove-StaleRustyV8GnOutput {
 
     $toolchainPath = Join-Path $gnOutDir 'toolchain.ninja'
     $usesLibcxxCompatibleMuslHeaderOrder = $false
+    $usesLibcxxMuslConfiguration = $false
     if (Test-Path -LiteralPath $toolchainPath -PathType Leaf) {
         $toolchainText = [System.IO.File]::ReadAllText($toolchainPath)
         $usesLibcxxCompatibleMuslHeaderOrder =
             $toolchainText.Contains('-idirafter') -and
             $toolchainText.Contains('/libc/include/generic-musl')
+        $usesLibcxxMuslConfiguration = $toolchainText.Contains('-DANDROID_HOST_MUSL')
     }
 
     if (-not $usesForcedSystemClang -and
         $usesTargetMuslHeaders -and
         $usesIsolatedSnapshotToolchain -and
-        $usesLibcxxCompatibleMuslHeaderOrder) {
+        $usesLibcxxCompatibleMuslHeaderOrder -and
+        $usesLibcxxMuslConfiguration) {
         return $false
     }
 
@@ -583,6 +586,9 @@ function Remove-StaleRustyV8GnOutput {
     }
     if (-not $usesLibcxxCompatibleMuslHeaderOrder) {
         $reasons += 'placed Zig musl headers before libc++ compatibility wrappers'
+    }
+    if (-not $usesLibcxxMuslConfiguration) {
+        $reasons += 'did not enable Chromium libc++ musl configuration'
     }
 
     Remove-Item -LiteralPath $gnOutDir -Recurse -Force

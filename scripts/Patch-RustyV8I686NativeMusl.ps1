@@ -124,6 +124,7 @@ function Patch-RustyV8I686NativeMusl {
             '      "-idirafter${rusty_v8_zig_lib_dir}/libc/include/x86-linux-any",'
             '      "-idirafter${rusty_v8_zig_lib_dir}/libc/include/any-linux-any",'
             '    ]'
+            '    defines += [ "ANDROID_HOST_MUSL" ]'
             '  }'
         ) -join "`n"
         if (-not $compilerGn.Contains($nativeHeadersAnchor)) {
@@ -147,6 +148,25 @@ function Patch-RustyV8I686NativeMusl {
             "-idirafter`${rusty_v8_zig_lib_dir}/$includeDir"
         )
     }
+    $libcxxMuslDefine = '    defines += [ "ANDROID_HOST_MUSL" ]'
+    if (-not $compilerGn.Contains($libcxxMuslDefine)) {
+        $libcxxMuslAnchor = @(
+            '      "-idirafter${rusty_v8_zig_lib_dir}/libc/include/any-linux-any",'
+            '    ]'
+            '  }'
+        ) -join "`n"
+        $libcxxMuslPatch = @(
+            '      "-idirafter${rusty_v8_zig_lib_dir}/libc/include/any-linux-any",'
+            '    ]'
+            '    defines += [ "ANDROID_HOST_MUSL" ]'
+            '  }'
+        ) -join "`n"
+        if (-not $compilerGn.Contains($libcxxMuslAnchor)) {
+            throw "rusty_v8 libc++ musl configuration contract changed: $compilerGnPath"
+        }
+        $compilerGn = $compilerGn.Replace($libcxxMuslAnchor, $libcxxMuslPatch)
+    }
+
     $gnuTripleLine = '        cflags += [ "--target=i386-unknown-linux-gnu" ]'
     $muslTripleMarker = '          cflags += [ "--target=i386-unknown-linux-musl" ]'
     if (-not $compilerGn.Contains($muslTripleMarker)) {
@@ -210,6 +230,7 @@ function Patch-RustyV8I686NativeMusl {
         @{ Path = $compilerGnPath; Needle = '# rusty_v8 i686-musl target C/C++ headers' },
         @{ Path = $compilerGnPath; Needle = '--target=i386-unknown-linux-musl' },
         @{ Path = $compilerGnPath; Needle = '-idirafter${rusty_v8_zig_lib_dir}/libc/include/generic-musl' },
+        @{ Path = $compilerGnPath; Needle = 'defines += [ "ANDROID_HOST_MUSL" ]' },
         @{ Path = $compilerGnPath; Needle = 'rusty_v8_zig_lib_dir != "" && is_a_target_toolchain' },
         @{ Path = $linuxToolchainGnPath; Needle = 'clang_v8_toolchain("clang_x86_v8_x86_glibc")' },
         @{ Path = $linuxToolchainGnPath; Needle = 'rusty_v8_zig_lib_dir = ""' }
@@ -225,6 +246,7 @@ function Patch-RustyV8I686NativeMusl {
         target_triple = "i386-unknown-linux-musl"
         native_zig_musl_headers = $true
         native_zig_musl_headers_after_libcxx = $true
+        libcxx_musl_configuration = "ANDROID_HOST_MUSL"
         snapshot_toolchain = "//build/toolchain/linux:clang_x86_v8_x86_glibc"
         snapshot_toolchain_libc = "glibc"
         snapshot_toolchain_pointer_width = 32
