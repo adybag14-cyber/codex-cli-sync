@@ -580,7 +580,8 @@ function Remove-StaleRustyV8GnOutput {
     }
     if (-not $usesIsolatedSnapshotToolchain) {
         $reasons += 'did not isolate the runnable x86 snapshot toolchain on glibc'
-    }    if (-not $usesLibcxxCompatibleMuslHeaderOrder) {
+    }
+    if (-not $usesLibcxxCompatibleMuslHeaderOrder) {
         $reasons += 'placed Zig musl headers before libc++ compatibility wrappers'
     }
 
