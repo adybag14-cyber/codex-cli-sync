@@ -118,11 +118,11 @@ function Patch-RustyV8I686NativeMusl {
             '      current_cpu == "x86") {'
             '    cflags += ['
             '      "-nostdinc",'
-            '      "-isystem${rusty_v8_zig_lib_dir}/include",'
-            '      "-isystem${rusty_v8_zig_lib_dir}/libc/include/x86-linux-musl",'
-            '      "-isystem${rusty_v8_zig_lib_dir}/libc/include/generic-musl",'
-            '      "-isystem${rusty_v8_zig_lib_dir}/libc/include/x86-linux-any",'
-            '      "-isystem${rusty_v8_zig_lib_dir}/libc/include/any-linux-any",'
+            '      "-idirafter${rusty_v8_zig_lib_dir}/include",'
+            '      "-idirafter${rusty_v8_zig_lib_dir}/libc/include/x86-linux-musl",'
+            '      "-idirafter${rusty_v8_zig_lib_dir}/libc/include/generic-musl",'
+            '      "-idirafter${rusty_v8_zig_lib_dir}/libc/include/x86-linux-any",'
+            '      "-idirafter${rusty_v8_zig_lib_dir}/libc/include/any-linux-any",'
             '    ]'
             '  }'
         ) -join "`n"
@@ -132,6 +132,21 @@ function Patch-RustyV8I686NativeMusl {
         $compilerGn = $compilerGn.Replace($nativeHeadersAnchor, $nativeHeadersPatch)
     }
 
+    # Migrate restored registry sources from the earlier ordering. libc++ must
+    # see its C compatibility wrappers before Zig's platform C headers so the
+    # wrappers can use include_next to reach musl.
+    foreach ($includeDir in @(
+        'include',
+        'libc/include/x86-linux-musl',
+        'libc/include/generic-musl',
+        'libc/include/x86-linux-any',
+        'libc/include/any-linux-any'
+    )) {
+        $compilerGn = $compilerGn.Replace(
+            "-isystem`${rusty_v8_zig_lib_dir}/$includeDir",
+            "-idirafter`${rusty_v8_zig_lib_dir}/$includeDir"
+        )
+    }
     $gnuTripleLine = '        cflags += [ "--target=i386-unknown-linux-gnu" ]'
     $muslTripleMarker = '          cflags += [ "--target=i386-unknown-linux-musl" ]'
     if (-not $compilerGn.Contains($muslTripleMarker)) {
@@ -194,6 +209,7 @@ function Patch-RustyV8I686NativeMusl {
         @{ Path = $buildRsPath; Needle = 'clang_x86_v8_x86_glibc' },
         @{ Path = $compilerGnPath; Needle = '# rusty_v8 i686-musl target C/C++ headers' },
         @{ Path = $compilerGnPath; Needle = '--target=i386-unknown-linux-musl' },
+        @{ Path = $compilerGnPath; Needle = '-idirafter${rusty_v8_zig_lib_dir}/libc/include/generic-musl' },
         @{ Path = $compilerGnPath; Needle = 'rusty_v8_zig_lib_dir != "" && is_a_target_toolchain' },
         @{ Path = $linuxToolchainGnPath; Needle = 'clang_v8_toolchain("clang_x86_v8_x86_glibc")' },
         @{ Path = $linuxToolchainGnPath; Needle = 'rusty_v8_zig_lib_dir = ""' }
@@ -208,6 +224,7 @@ function Patch-RustyV8I686NativeMusl {
         v8_version = $V8Version
         target_triple = "i386-unknown-linux-musl"
         native_zig_musl_headers = $true
+        native_zig_musl_headers_after_libcxx = $true
         snapshot_toolchain = "//build/toolchain/linux:clang_x86_v8_x86_glibc"
         snapshot_toolchain_libc = "glibc"
         snapshot_toolchain_pointer_width = 32

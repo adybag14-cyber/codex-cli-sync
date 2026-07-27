@@ -554,7 +554,20 @@ function Remove-StaleRustyV8GnOutput {
     $usesForcedSystemClang = $argsText -match 'clang_base_path\s*=\s*"/usr/lib/llvm-[^"]+"'
     $usesTargetMuslHeaders = $argsText -match 'rusty_v8_zig_lib_dir\s*=\s*"[^"]+"'
     $usesIsolatedSnapshotToolchain = $argsText -match 'v8_snapshot_toolchain\s*=\s*"//build/toolchain/linux:clang_x86_v8_x86_glibc"'
-    if (-not $usesForcedSystemClang -and $usesTargetMuslHeaders -and $usesIsolatedSnapshotToolchain) {
+
+    $toolchainPath = Join-Path $gnOutDir 'toolchain.ninja'
+    $usesLibcxxCompatibleMuslHeaderOrder = $false
+    if (Test-Path -LiteralPath $toolchainPath -PathType Leaf) {
+        $toolchainText = [System.IO.File]::ReadAllText($toolchainPath)
+        $usesLibcxxCompatibleMuslHeaderOrder =
+            $toolchainText.Contains('-idirafter') -and
+            $toolchainText.Contains('/libc/include/generic-musl')
+    }
+
+    if (-not $usesForcedSystemClang -and
+        $usesTargetMuslHeaders -and
+        $usesIsolatedSnapshotToolchain -and
+        $usesLibcxxCompatibleMuslHeaderOrder) {
         return $false
     }
 
@@ -567,6 +580,8 @@ function Remove-StaleRustyV8GnOutput {
     }
     if (-not $usesIsolatedSnapshotToolchain) {
         $reasons += 'did not isolate the runnable x86 snapshot toolchain on glibc'
+    }    if (-not $usesLibcxxCompatibleMuslHeaderOrder) {
+        $reasons += 'placed Zig musl headers before libc++ compatibility wrappers'
     }
 
     Remove-Item -LiteralPath $gnOutDir -Recurse -Force
