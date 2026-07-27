@@ -11,6 +11,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Patch-RustyV8I686Abi.ps1")
+. (Join-Path $PSScriptRoot "Patch-RustyV8I686NativeMusl.ps1")
 
 if ($LinuxTarget -ne "i686-unknown-linux-musl") {
     throw "Unsupported Linux target: $LinuxTarget"
@@ -551,12 +552,25 @@ function Remove-StaleRustyV8GnOutput {
 
     $argsText = [System.IO.File]::ReadAllText($argsPath)
     $usesForcedSystemClang = $argsText -match 'clang_base_path\s*=\s*"/usr/lib/llvm-[^"]+"'
-    if (-not $usesForcedSystemClang) {
+    $usesTargetMuslHeaders = $argsText -match 'rusty_v8_zig_lib_dir\s*=\s*"[^"]+"'
+    $usesIsolatedSnapshotToolchain = $argsText -match 'v8_snapshot_toolchain\s*=\s*"//build/toolchain/linux:clang_x86_v8_x86_glibc"'
+    if (-not $usesForcedSystemClang -and $usesTargetMuslHeaders -and $usesIsolatedSnapshotToolchain) {
         return $false
     }
 
+    $reasons = @()
+    if ($usesForcedSystemClang) {
+        $reasons += 'forced an incompatible system Clang'
+    }
+    if (-not $usesTargetMuslHeaders) {
+        $reasons += 'did not compile target objects against Zig musl headers'
+    }
+    if (-not $usesIsolatedSnapshotToolchain) {
+        $reasons += 'did not isolate the runnable x86 snapshot toolchain on glibc'
+    }
+
     Remove-Item -LiteralPath $gnOutDir -Recurse -Force
-    Write-Host "Removed stale rusty_v8 GN output that forced an incompatible system Clang: $gnOutDir"
+    Write-Host "Removed stale rusty_v8 GN output because it $($reasons -join '; '): $gnOutDir"
     return $true
 }
 
@@ -801,6 +815,7 @@ try {
     $rustyV8IcuData = Restore-RustyV8IcuDataBlob -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
     $rustyV8RustVendor = Restore-RustyV8ChromiumRustVendor -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
     $rustyV8I686Abi = Patch-RustyV8I686Abi -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
+    $rustyV8I686NativeMusl = Patch-RustyV8I686NativeMusl -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
     $removedStaleV8GnOutput = Remove-StaleRustyV8GnOutput -CodexRsDir $codexRsDir -Target $LinuxTarget
     cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
@@ -967,6 +982,7 @@ $manifest = [ordered]@{
         rusty_v8_chromium_rust_vendor_archive_sha256 = $rustyV8RustVendor.archive_sha256
         rusty_v8_chromium_rust_vendor_sentinel_blobs = $rustyV8RustVendor.sentinel_blobs
         rusty_v8_i686_abi_patch = $rustyV8I686Abi
+        rusty_v8_i686_native_musl_patch = $rustyV8I686NativeMusl
         mcp_server_recursion_limit_256 = $true
         mcp_server_recursion_limit_text_changed = [bool]$mcpServerRecursionLimitPatched
         rusty_v8_archive_path = $v8ArchivePath
