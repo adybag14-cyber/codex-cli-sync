@@ -558,19 +558,25 @@ function Remove-StaleRustyV8GnOutput {
     $toolchainPath = Join-Path $gnOutDir 'toolchain.ninja'
     $usesLibcxxCompatibleMuslHeaderOrder = $false
     $usesLibcxxMuslConfiguration = $false
+    $usesBundledCompilerBuiltinHeaders = $false
     if (Test-Path -LiteralPath $toolchainPath -PathType Leaf) {
         $toolchainText = [System.IO.File]::ReadAllText($toolchainPath)
         $usesLibcxxCompatibleMuslHeaderOrder =
             $toolchainText.Contains('-idirafter') -and
             $toolchainText.Contains('/libc/include/generic-musl')
         $usesLibcxxMuslConfiguration = $toolchainText.Contains('-DANDROID_HOST_MUSL')
+        $usesBundledCompilerBuiltinHeaders =
+            $toolchainText.Contains('-nostdlibinc') -and
+            -not ($toolchainText -match '(^|\s)-nostdinc(\s|$)') -and
+            -not ($toolchainText -match '-idirafter[^\s]*/lib/include(?=\s|$)')
     }
 
     if (-not $usesForcedSystemClang -and
         $usesTargetMuslHeaders -and
         $usesIsolatedSnapshotToolchain -and
         $usesLibcxxCompatibleMuslHeaderOrder -and
-        $usesLibcxxMuslConfiguration) {
+        $usesLibcxxMuslConfiguration -and
+        $usesBundledCompilerBuiltinHeaders) {
         return $false
     }
 
@@ -589,6 +595,9 @@ function Remove-StaleRustyV8GnOutput {
     }
     if (-not $usesLibcxxMuslConfiguration) {
         $reasons += 'did not enable Chromium libc++ musl configuration'
+    }
+    if (-not $usesBundledCompilerBuiltinHeaders) {
+        $reasons += 'mixed Zig intrinsic headers with Chromium Clang'
     }
 
     Remove-Item -LiteralPath $gnOutDir -Recurse -Force

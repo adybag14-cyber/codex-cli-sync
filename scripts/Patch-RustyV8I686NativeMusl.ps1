@@ -117,8 +117,7 @@ function Patch-RustyV8I686NativeMusl {
             '  if (rusty_v8_zig_lib_dir != "" && is_a_target_toolchain &&'
             '      current_cpu == "x86") {'
             '    cflags += ['
-            '      "-nostdinc",'
-            '      "-idirafter${rusty_v8_zig_lib_dir}/include",'
+            '      "-nostdlibinc",'
             '      "-idirafter${rusty_v8_zig_lib_dir}/libc/include/x86-linux-musl",'
             '      "-idirafter${rusty_v8_zig_lib_dir}/libc/include/generic-musl",'
             '      "-idirafter${rusty_v8_zig_lib_dir}/libc/include/x86-linux-any",'
@@ -133,11 +132,19 @@ function Patch-RustyV8I686NativeMusl {
         $compilerGn = $compilerGn.Replace($nativeHeadersAnchor, $nativeHeadersPatch)
     }
 
-    # Migrate restored registry sources from the earlier ordering. libc++ must
-    # see its C compatibility wrappers before Zig's platform C headers so the
-    # wrappers can use include_next to reach musl.
+    # Migrate restored registry sources from the earlier ordering. Keep the
+    # bundled Clang resource headers for intrinsics and add only Zig's libc
+    # headers after libc++ so its wrappers can use include_next to reach musl.
+    $compilerGn = $compilerGn.Replace('      "-nostdinc",', '      "-nostdlibinc",')
+    $compilerGn = $compilerGn.Replace(
+        '      "-idirafter${rusty_v8_zig_lib_dir}/include",' + "`n",
+        ''
+    )
+    $compilerGn = $compilerGn.Replace(
+        '      "-isystem${rusty_v8_zig_lib_dir}/include",' + "`n",
+        ''
+    )
     foreach ($includeDir in @(
-        'include',
         'libc/include/x86-linux-musl',
         'libc/include/generic-musl',
         'libc/include/x86-linux-any',
@@ -181,6 +188,13 @@ function Patch-RustyV8I686NativeMusl {
             '        }'
         ) -join "`n"
         $compilerGn = $compilerGn.Replace($gnuTripleLine, $triplePatch)
+    }
+    if ($compilerGn.Contains('      "-nostdinc",')) {
+        throw "rusty_v8 native build still disables bundled Clang resource headers: $compilerGnPath"
+    }
+    if ($compilerGn.Contains('-idirafter${rusty_v8_zig_lib_dir}/include') -or
+        $compilerGn.Contains('-isystem${rusty_v8_zig_lib_dir}/include')) {
+        throw "rusty_v8 native build still mixes Zig intrinsic headers with Chromium Clang: $compilerGnPath"
     }
     [System.IO.File]::WriteAllText($compilerGnPath, $compilerGn, [System.Text.UTF8Encoding]::new($false))
 
@@ -229,6 +243,7 @@ function Patch-RustyV8I686NativeMusl {
         @{ Path = $buildRsPath; Needle = 'clang_x86_v8_x86_glibc' },
         @{ Path = $compilerGnPath; Needle = '# rusty_v8 i686-musl target C/C++ headers' },
         @{ Path = $compilerGnPath; Needle = '--target=i386-unknown-linux-musl' },
+        @{ Path = $compilerGnPath; Needle = '-nostdlibinc' },
         @{ Path = $compilerGnPath; Needle = '-idirafter${rusty_v8_zig_lib_dir}/libc/include/generic-musl' },
         @{ Path = $compilerGnPath; Needle = 'defines += [ "ANDROID_HOST_MUSL" ]' },
         @{ Path = $compilerGnPath; Needle = 'rusty_v8_zig_lib_dir != "" && is_a_target_toolchain' },
@@ -246,6 +261,7 @@ function Patch-RustyV8I686NativeMusl {
         target_triple = "i386-unknown-linux-musl"
         native_zig_musl_headers = $true
         native_zig_musl_headers_after_libcxx = $true
+        native_compiler_builtin_headers = $true
         libcxx_musl_configuration = "ANDROID_HOST_MUSL"
         snapshot_toolchain = "//build/toolchain/linux:clang_x86_v8_x86_glibc"
         snapshot_toolchain_libc = "glibc"
