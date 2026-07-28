@@ -1,18 +1,24 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "1ee8f49175a91c8fbfb9e93310331dfc45fc0dbd",
+  "upstream_sha": "8f00b9a04cb542ad19a79f9f6c32348421741602",
   "linux_target": "i686-unknown-linux-musl",
-  "generated_at_utc": "2026-07-23T22:54:36.3625033Z",
-  "release_tag": "linux-i686-musl-1ee8f49175a9",
+  "generated_at_utc": "2026-07-28T17:58:24.8529535Z",
+  "release_tag": "linux-i686-musl-8f00b9a04cb5",
   "rolling_tag": "latest-linux-i686-musl",
   "custom_runtime_patches": "not_applied",
   "compatibility_patches": [
     {
-      "name": "disable_v8_code_mode_for_i686_musl",
+      "name": "build_rusty_v8_from_source_for_i686_musl",
       "applied": true,
-      "reason": "rusty_v8 v147.4.0 does not publish librusty_v8_release_i686-unknown-linux-musl.a.gz",
-      "effect": "JavaScript code mode returns an unavailable error on this i686 musl package; standard Codex CLI behavior remains built from upstream source."
+      "reason": "rusty_v8 149.2.0 has no published i686-unknown-linux-musl archive, so CI builds the real x86 V8 archive from source.",
+      "effect": "JavaScript code mode remains enabled in the i686 musl package."
+    },
+    {
+      "name": "raise_mcp_server_recursion_limit",
+      "applied": true,
+      "reason": "Current upstream codex-mcp-server type queries exceed Rust's default recursion depth in release builds.",
+      "effect": "codex-mcp-server builds deterministically with recursion_limit 256."
     },
     {
       "name": "i686_musl_linux_sandbox_syscall_compile_fix",
@@ -30,7 +36,58 @@
   "build_adjustments": {
     "vendored_openssl_for_i686_musl": true,
     "blake3_pure_for_i686_musl": true,
-    "v8_code_mode_disabled_for_i686_musl": true,
+    "rusty_v8_built_from_source_for_i686_musl": true,
+    "rusty_v8_version": "149.2.0",
+    "rusty_v8_gn_args": "v8_target_cpu=\"x86\" use_sysroot=false treat_warnings_as_errors=false",
+    "rusty_v8_num_jobs": "2",
+    "rusty_v8_compiler_toolchain": "Chromium bundled Clang/Compiler-RT",
+    "rusty_v8_clang_base_path_forced": false,
+    "rusty_v8_stale_system_clang_gn_output_removed": false,
+    "rusty_v8_icu_data_path": "/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/v8-149.2.0/third_party/icu/common/icudtl.dat",
+    "rusty_v8_icu_data_restored": true,
+    "rusty_v8_icu_revision": "ee5f27adc28bd3f15b2c293f726d14d2e336cbd5",
+    "rusty_v8_icu_git_blob": "d1a12cb93065157498a11ff5f4b9a6501ee22506",
+    "rusty_v8_icu_bytes": 10822192,
+    "rusty_v8_icu_sha256": "1cf67874b5a87a8363a86fb3f81e3cbbed54d389062dab8fb52308d5cf8c8612",
+    "rusty_v8_chromium_rust_vendor_path": "/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/v8-149.2.0/third_party/rust/chromium_crates_io/vendor",
+    "rusty_v8_chromium_rust_vendor_restored": true,
+    "rusty_v8_chromium_rust_revision": "2b055f4ecac78bbf34a0d34217c699b7b09b44dd",
+    "rusty_v8_chromium_rust_vendor_tree": "2d3dd155f076c848a7311679d0015524e338c937",
+    "rusty_v8_chromium_rust_vendor_files": 9548,
+    "rusty_v8_chromium_rust_vendor_archive_bytes": 202915840,
+    "rusty_v8_chromium_rust_vendor_archive_sha256": "3ca2631e74ae2ea027f8b20ed0b74747a9c2e6d000c7934fcddf3612dd034af5",
+    "rusty_v8_chromium_rust_vendor_sentinel_blobs": {
+      "chromium_crates_io/vendor/icu_calendar_data-v2/build.rs": "62e9cb73c569dccc5968e521a9e328709c245aad",
+      "chromium_crates_io/vendor/cxx-v1/include/cxx.h": "4e261a35536c5d96f22008cff6a095171af2f89c",
+      "chromium_crates_io/vendor/serde-v1/src/lib.rs": "ae495282bda35359b07e35fb55d891c8f7dacb82"
+    },
+    "rusty_v8_i686_abi_patch": {
+      "v8_version": "149.2.0",
+      "i686_compilation_details_bytes": 20,
+      "i686_source_bytes": 64,
+      "i686_cppgc_max_alignment": 8,
+      "i686_bindgen_direct_zig_musl_headers": true,
+      "i686_bindgen_cargo_zigbuild_args_cleared": true,
+      "i686_bindgen_forced_musl_stdint": true,
+      "x64_compilation_details_bytes": 24,
+      "x64_source_bytes": 104,
+      "x64_cppgc_max_alignment": 16
+    },
+    "rusty_v8_i686_native_musl_patch": {
+      "v8_version": "149.2.0",
+      "target_triple": "i386-unknown-linux-musl",
+      "native_zig_musl_headers": true,
+      "native_zig_musl_headers_after_libcxx": true,
+      "native_compiler_builtin_headers": true,
+      "libcxx_musl_configuration": "ANDROID_HOST_MUSL",
+      "snapshot_toolchain": "//build/toolchain/linux:clang_x86_v8_x86_glibc",
+      "snapshot_toolchain_libc": "glibc",
+      "snapshot_toolchain_pointer_width": 32
+    },
+    "mcp_server_recursion_limit_256": true,
+    "mcp_server_recursion_limit_text_changed": false,
+    "rusty_v8_archive_path": "/home/runner/work/codex-cli-sync/codex-cli-sync/out/codex-upstream-linux-i686/codex-rs/target/i686-unknown-linux-musl/release/gn_out/obj/librusty_v8.a",
+    "rusty_v8_archive_member_file_output": "/tmp/rusty-v8-i686-member-5392.o: ELF 32-bit LSB relocatable, Intel 80386, version 1 (SYSV), with debug_info, not stripped",
     "linux_sandbox_syscalls_patched_for_i686_musl": true,
     "openssl_no_c11_atomics_for_i686_musl": true,
     "openssl_broken_clang_atomics_for_i686_musl": true,
@@ -41,16 +98,17 @@
   },
   "verification": {
     "version_output": "codex-cli 0.0.0",
-    "file_output": "/home/runner/work/codex-cli-sync/codex-cli-sync/out/codex-upstream-linux-i686/codex-rs/target/i686-unknown-linux-musl/release/codex: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), statically linked, stripped"
+    "file_output": "/home/runner/work/codex-cli-sync/codex-cli-sync/out/codex-upstream-linux-i686/codex-rs/target/i686-unknown-linux-musl/release/codex: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), statically linked, stripped",
+    "rusty_v8_object_file_output": "/tmp/rusty-v8-i686-member-5392.o: ELF 32-bit LSB relocatable, Intel 80386, version 1 (SYSV), with debug_info, not stripped"
   },
   "artifact": {
-    "name": "codex-linux-i686-musl-1ee8f49175a9.tar.gz",
-    "sha256": "e0cf8bfc92ac2135a52441a6917b534b49cf9ffeabd3f5d82f5dd976fd264549"
+    "name": "codex-linux-i686-musl-8f00b9a04cb5.tar.gz",
+    "sha256": "10b2ac4e722fb2e796f4058c4b45a8737d0e117a73ba8047e4c8ebabb57ec432"
   },
   "packaged_files": [
     {
       "path": "codex",
-      "sha256": "47f3da8ae8384c1a65555ee6f0dfe0b5755562693fc24513788983ed8dd0e443"
+      "sha256": "1e219ac32965af0a4fddcd8b0ff41896d857b18943e16972fac686d214f37602"
     },
     {
       "path": "certs/ca-certificates.crt",
@@ -62,16 +120,16 @@
     },
     {
       "path": "README.TINYCORE.txt",
-      "sha256": "99ecdd57458b5e0d8fdf4f51b0dcf53541e666279a906afb0cb3a002d0ede18e"
+      "sha256": "b7a7723ee825456950d159042873866d7586ea1c8fc561b78af72aee071fe223"
     }
   ],
   "release_files": [
     {
-      "name": "codex-linux-i686-musl-1ee8f49175a9.tar.gz",
-      "sha256": "e0cf8bfc92ac2135a52441a6917b534b49cf9ffeabd3f5d82f5dd976fd264549"
+      "name": "codex-linux-i686-musl-8f00b9a04cb5.tar.gz",
+      "sha256": "10b2ac4e722fb2e796f4058c4b45a8737d0e117a73ba8047e4c8ebabb57ec432"
     },
     {
-      "name": "codex-linux-i686-musl-1ee8f49175a9.manifest.json",
+      "name": "codex-linux-i686-musl-8f00b9a04cb5.manifest.json",
       "sha256": null
     }
   ]
