@@ -13,6 +13,20 @@ on:
         required: false
         type: string
         default: main
+      run_target:
+        description: Build both targets or isolate one target for diagnosis
+        required: false
+        type: choice
+        options:
+          - all
+          - windows-custom
+          - linux-i686-musl
+        default: all
+      dry_run:
+        description: Build and upload artifacts without publishing releases or committing state
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -35,11 +49,12 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
-  group: sync-codex-windows-custom
+  group: sync-codex-windows-custom-${{ github.ref }}-${{ github.event.inputs.run_target || 'all' }}
   cancel-in-progress: false
 
 jobs:
   sync:
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.run_target != 'linux-i686-musl' }}
     runs-on: windows-2025
     timeout-minutes: 150
 
@@ -127,7 +142,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish Versioned Release
-        if: steps.sync.outputs.changed == 'true'
+        if: steps.sync.outputs.changed == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -185,7 +200,7 @@ jobs:
             -Prerelease
 
       - name: Publish Rolling Release
-        if: steps.sync.outputs.changed == 'true'
+        if: steps.sync.outputs.changed == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -245,7 +260,7 @@ jobs:
           throw "Custom Windows patch application failed: $env:PATCH_ERROR_SUMMARY"
 
       - name: Commit State Files
-        if: steps.sync.outputs.changed == 'true' && steps.sync.outputs.patch_status == 'applied'
+        if: steps.sync.outputs.changed == 'true' && steps.sync.outputs.patch_status == 'applied' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
         shell: pwsh
         env:
           UPSTREAM_SHA: ${{ steps.sync.outputs.upstream_sha }}
@@ -263,9 +278,9 @@ jobs:
 
   linux-i686-musl:
     needs: sync
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && (github.event_name != 'workflow_dispatch' || github.event.inputs.run_target != 'windows-custom') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 360
 
     steps:
       - name: Check Out Repository
@@ -281,23 +296,48 @@ jobs:
           git checkout $env:GITHUB_REF_NAME
           git pull --ff-only origin $env:GITHUB_REF_NAME
 
+      - name: Free Disk Space For rusty_v8 Source Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Disk usage before cleanup:"
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup
+          sudo apt-get clean
+          echo "Disk usage after cleanup:"
+          df -h /
+
       - name: Prepare Linux i686 Build Tools
         shell: bash
         run: |
           set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo 'deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main' \
+            | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential \
             ca-certificates \
-            clang \
+            ccache \
+            clang-21 \
             cmake \
             curl \
             file \
+            gcc-multilib \
             gzip \
-            lld \
+            libclang-21-dev \
+            libc6-dev-i386 \
+            libglib2.0-dev \
             make \
+            ninja-build \
             perl \
             pkg-config \
+            python3 \
             tar
           rustup target add i686-unknown-linux-musl
           cargo install cargo-zigbuild --locked
@@ -311,6 +351,47 @@ jobs:
           version: 0.15.2
           use-cache: false
 
+      - name: Configure Real rusty_v8 Source Build For Linux i686
+        shell: bash
+        run: |
+          set -euo pipefail
+          zig_lib_dir="$(dirname "$(readlink -f "$(command -v zig)")")/lib"
+          for include_dir in \
+            include \
+            libc/include/x86-linux-musl \
+            libc/include/generic-musl \
+            libc/include/x86-linux-any \
+            libc/include/any-linux-any
+          do
+            test -d "$zig_lib_dir/$include_dir"
+          done
+          {
+            echo 'V8_FROM_SOURCE=1'
+            echo 'PYTHON=python3'
+            echo 'LIBCLANG_PATH=/usr/lib/llvm-21/lib'
+            echo 'NINJA=/usr/bin/ninja'
+            echo 'PRINT_GN_ARGS=1'
+            echo 'NUM_JOBS=2'
+            echo 'GN_ARGS=v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
+            echo "RUSTY_V8_ZIG_LIB_DIR=$zig_lib_dir"
+          } >> "$GITHUB_ENV"
+          test -f /usr/lib/llvm-21/lib/libclang.so
+          test -z "${CLANG_BASE_PATH:-}"
+          clang-21 --version
+          echo "rusty_v8 build.rs will inject Zig's i686 musl headers directly into bindgen; native code will use Chromium's matching Clang/Compiler-RT toolchain."
+          echo "Zig library directory: $zig_lib_dir"
+          ninja --version
+          python3 --version
+
+      - name: Verify Linux i686 Bindgen Environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GN_ARGS" = 'v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
+          test -d "$RUSTY_V8_ZIG_LIB_DIR/libc/include/x86-linux-musl"
+          test -d "$RUSTY_V8_ZIG_LIB_DIR/libc/include/generic-musl"
+          echo "direct rusty_v8 Zig-musl bindgen environment is active"
+
       - name: Restore Linux i686 Cargo Cache
         id: linux-i686-cargo-cache-restore
         uses: actions/cache/restore@v4
@@ -319,10 +400,11 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cache/ccache
             out/codex-upstream-linux-i686/codex-rs/target
-          key: linux-i686-musl-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/sync-codex-linux-i686-musl.ps1', 'state/latest-linux-i686-musl-sha.txt') }}
+          key: linux-i686-musl-rusty-v8-abi-v5-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/sync-codex-linux-i686-musl.ps1', 'scripts/Patch-RustyV8I686Abi.ps1', 'scripts/Patch-RustyV8I686NativeMusl.ps1', 'state/latest-linux-i686-musl-sha.txt') }}
           restore-keys: |
-            linux-i686-musl-cargo-${{ runner.os }}-
+            linux-i686-musl-rusty-v8-abi-v5-cargo-${{ runner.os }}-
 
       - name: Remove Incomplete Cargo Cache Locks
         shell: pwsh
@@ -358,6 +440,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cache/ccache
             out/codex-upstream-linux-i686/codex-rs/target
           key: ${{ steps.linux-i686-cargo-cache-restore.outputs.cache-primary-key }}
 
@@ -372,7 +455,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish Linux i686 Versioned Release
-        if: steps.linux_i686.outputs.changed == 'true'
+        if: steps.linux_i686.outputs.changed == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -386,7 +469,7 @@ jobs:
           )
           $body = @"
           Linux i686 musl Codex build compiled from upstream OpenAI Codex without the Windows custom runtime patches.
-          Compatibility: JavaScript code mode is disabled in this target package because rusty_v8 does not publish a prebuilt V8 archive for i686-unknown-linux-musl.
+          Compatibility: JavaScript code mode is enabled; rusty_v8 is compiled from source for real 32-bit x86 during this GitHub Actions build.
 
           Upstream repo: ${{ steps.linux_i686.outputs.upstream_repo }}
           Upstream ref: ${{ steps.linux_i686.outputs.upstream_ref }}
@@ -409,7 +492,7 @@ jobs:
             -Prerelease
 
       - name: Publish Linux i686 Rolling Release
-        if: steps.linux_i686.outputs.changed == 'true'
+        if: steps.linux_i686.outputs.changed == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -423,7 +506,7 @@ jobs:
           )
           $body = @"
           Rolling Linux i686 musl Codex build.
-          Compatibility: JavaScript code mode is disabled in this target package because rusty_v8 does not publish a prebuilt V8 archive for i686-unknown-linux-musl.
+          Compatibility: JavaScript code mode is enabled; rusty_v8 is compiled from source for real 32-bit x86 during this GitHub Actions build.
 
           Upstream repo: ${{ steps.linux_i686.outputs.upstream_repo }}
           Upstream ref: ${{ steps.linux_i686.outputs.upstream_ref }}
@@ -447,7 +530,7 @@ jobs:
             -Prerelease
 
       - name: Commit Linux i686 State Files
-        if: steps.linux_i686.outputs.changed == 'true'
+        if: steps.linux_i686.outputs.changed == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
         shell: pwsh
         env:
           UPSTREAM_SHA: ${{ steps.linux_i686.outputs.upstream_sha }}

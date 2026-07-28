@@ -10,6 +10,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "Patch-RustyV8I686Abi.ps1")
+. (Join-Path $PSScriptRoot "Patch-RustyV8I686NativeMusl.ps1")
 
 if ($LinuxTarget -ne "i686-unknown-linux-musl") {
     throw "Unsupported Linux target: $LinuxTarget"
@@ -118,9 +120,10 @@ function Enable-I686MuslVendoredOpenSsl {
 openssl-sys = { workspace = true, features = ["vendored"] }
 '@
 
+    $updatedText = ($text.TrimEnd() + $addition + "`n").Replace("`r`n", "`n")
     [System.IO.File]::WriteAllText(
         $CargoTomlPath,
-        $text.TrimEnd() + $addition + [Environment]::NewLine,
+        $updatedText,
         [System.Text.UTF8Encoding]::new($false)
     )
     return $true
@@ -151,6 +154,7 @@ function Enable-I686MuslBlake3PureFeature {
         $text = $text.TrimEnd() + $addition
     }
 
+    $text = $text.Replace("`r`n", "`n")
     [System.IO.File]::WriteAllText(
         $CargoTomlPath,
         $text,
@@ -158,368 +162,446 @@ function Enable-I686MuslBlake3PureFeature {
     )
     return $true
 }
-function Disable-I686MuslV8CodeMode {
-    param([Parameter(Mandatory = $true)][string]$CodexRsDir)
-
-    $codeModeDir = Join-Path $CodexRsDir "code-mode"
-    $srcDir = Join-Path $codeModeDir "src"
-    $cargoTomlPath = Join-Path $codeModeDir "Cargo.toml"
-
-    if (-not (Test-Path -LiteralPath $cargoTomlPath -PathType Leaf)) {
-        throw "Required code-mode file not found: $cargoTomlPath"
-    }
-    if (-not (Test-Path -LiteralPath $srcDir -PathType Container)) {
-        throw "Required code-mode src dir not found: $srcDir"
-    }
-
-    # Drop V8/deno deps — rusty_v8 has no i686-unknown-linux-musl prebuilds.
-    $cargoToml = [System.IO.File]::ReadAllText($cargoTomlPath)
-    $cargoToml = $cargoToml -replace 'sandbox = \["v8/v8_enable_sandbox"\]', 'sandbox = []'
-    $cargoToml = $cargoToml -replace '(?m)^deno_core_icudata = \{ workspace = true \}\r?\n', ''
-    $cargoToml = $cargoToml -replace '(?m)^v8 = \{ workspace = true \}\r?\n', ''
-    # Full runtime path only; stub does not need codex-protocol.
-    $cargoToml = $cargoToml -replace '(?m)^codex-protocol = \{ workspace = true \}\r?\n', ''
-    [System.IO.File]::WriteAllText(
-        $cargoTomlPath,
-        $cargoToml,
-        [System.Text.UTF8Encoding]::new($false)
+function Ensure-RustCrateRecursionLimit {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$Minimum = 256
     )
 
-    # Replace the whole source tree with a compile-only stub that preserves the
-    # public API used by codex-core / code-mode-host (InProcess + ProcessOwned
-    # providers/sessions, V8 init shims). Real JS execution is unavailable.
-    if (Test-Path -LiteralPath $srcDir) {
-        Remove-Item -LiteralPath $srcDir -Recurse -Force
-    }
-    New-Item -ItemType Directory -Force -Path $srcDir | Out-Null
-
-    $utf8 = [System.Text.UTF8Encoding]::new($false)
-
-    $libSource = @'
-pub use codex_code_mode_protocol::*;
-pub use remote_session::ProcessOwnedCodeModeSession;
-pub use remote_session::ProcessOwnedCodeModeSessionProvider;
-pub use service::InProcessCodeModeSession;
-pub use service::InProcessCodeModeSessionProvider;
-pub use service::NoopCodeModeSessionDelegate;
-pub use v8_init::V8JitMode;
-pub use v8_init::initialize_v8;
-
-mod remote_session;
-mod service;
-mod v8_init;
-'@
-
-    $v8InitSource = @'
-/// JIT mode selector kept for API compatibility with the full V8 build.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum V8JitMode {
-    Enabled,
-    Disabled,
-}
-
-/// No-op on i686 musl: JavaScript code mode is intentionally unavailable.
-pub fn initialize_v8(_jit_mode: V8JitMode) -> Result<(), String> {
-    Ok(())
-}
-'@
-
-    $serviceSource = @'
-use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
-
-use codex_code_mode_protocol::CellId;
-use codex_code_mode_protocol::CodeModeNestedToolCall;
-use codex_code_mode_protocol::CodeModeSession;
-use codex_code_mode_protocol::CodeModeSessionDelegate;
-use codex_code_mode_protocol::CodeModeSessionProvider;
-use codex_code_mode_protocol::CodeModeSessionProviderFuture;
-use codex_code_mode_protocol::CodeModeSessionResultFuture;
-use codex_code_mode_protocol::ExecuteRequest;
-use codex_code_mode_protocol::ExecuteToPendingOutcome;
-use codex_code_mode_protocol::FunctionCallOutputContentItem;
-use codex_code_mode_protocol::NotificationFuture;
-use codex_code_mode_protocol::RuntimeResponse;
-use codex_code_mode_protocol::StartedCell;
-use codex_code_mode_protocol::ToolInvocationFuture;
-use codex_code_mode_protocol::WaitOutcome;
-use codex_code_mode_protocol::WaitRequest;
-use codex_code_mode_protocol::WaitToPendingOutcome;
-use codex_code_mode_protocol::WaitToPendingRequest;
-use tokio::sync::oneshot;
-use tokio_util::sync::CancellationToken;
-
-const UNAVAILABLE: &str = "code mode is unavailable in this i686-unknown-linux-musl build because rusty_v8 does not publish a prebuilt V8 archive for this target";
-
-pub struct NoopCodeModeSessionDelegate;
-
-impl CodeModeSessionDelegate for NoopCodeModeSessionDelegate {
-    fn invoke_tool<'a>(
-        &'a self,
-        _invocation: CodeModeNestedToolCall,
-        cancellation_token: CancellationToken,
-    ) -> ToolInvocationFuture<'a> {
-        Box::pin(async move {
-            cancellation_token.cancelled().await;
-            Err("code mode nested tools are unavailable".to_string())
-        })
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Required Rust crate root not found: $Path"
     }
 
-    fn notify<'a>(
-        &'a self,
-        _call_id: String,
-        _cell_id: CellId,
-        _text: String,
-        _cancellation_token: CancellationToken,
-    ) -> NotificationFuture<'a> {
-        Box::pin(async { Ok(()) })
+    $text = [System.IO.File]::ReadAllText($Path)
+    $pattern = '(?m)^#!\[recursion_limit\s*=\s*"(?<value>\d+)"\]\s*\r?\n'
+    $match = [regex]::Match($text, $pattern)
+    if ($match.Success) {
+        $current = [int]$match.Groups['value'].Value
+        if ($current -ge $Minimum) {
+            Write-Host "Kept Rust recursion limit $current in $Path."
+            return $false
+        }
+        $regex = [regex]::new($pattern)
+        $text = $regex.Replace($text, "#![recursion_limit = `"$Minimum`"]`n", 1)
+    } else {
+        $text = "#![recursion_limit = `"$Minimum`"]`n" + $text
     }
 
-    fn cell_closed(&self, _cell_id: &CellId) {}
+    [System.IO.File]::WriteAllText($Path, $text, [System.Text.UTF8Encoding]::new($false))
+    Write-Host "Raised Rust recursion limit to $Minimum in $Path."
+    return $true
 }
 
-#[derive(Default)]
-pub struct InProcessCodeModeSessionProvider;
+function Get-CargoLockedPackageVersion {
+    param(
+        [Parameter(Mandatory = $true)][string]$CargoLockPath,
+        [Parameter(Mandatory = $true)][string]$PackageName
+    )
 
-impl CodeModeSessionProvider for InProcessCodeModeSessionProvider {
-    fn create_session<'a>(
-        &'a self,
-        delegate: Arc<dyn CodeModeSessionDelegate>,
-    ) -> CodeModeSessionProviderFuture<'a> {
-        Box::pin(async move {
-            let session: Arc<dyn CodeModeSession> =
-                Arc::new(InProcessCodeModeSession::with_delegate(delegate));
-            Ok(session)
-        })
-    }
-}
-
-pub struct InProcessCodeModeSession {
-    next_cell_id: AtomicU64,
-    delegate: Arc<dyn CodeModeSessionDelegate>,
-}
-
-impl InProcessCodeModeSession {
-    pub fn new() -> Self {
-        Self::with_delegate(Arc::new(NoopCodeModeSessionDelegate))
+    if (-not (Test-Path -LiteralPath $CargoLockPath -PathType Leaf)) {
+        throw "Cargo.lock not found: $CargoLockPath"
     }
 
-    pub fn with_delegate(delegate: Arc<dyn CodeModeSessionDelegate>) -> Self {
-        Self {
-            next_cell_id: AtomicU64::new(1),
-            delegate,
+    $text = [System.IO.File]::ReadAllText($CargoLockPath)
+    $pattern = '(?ms)^\[\[package\]\]\s*\r?\nname\s*=\s*"' + [regex]::Escape($PackageName) + '"\s*\r?\nversion\s*=\s*"(?<version>[^"]+)"'
+    $match = [regex]::Match($text, $pattern)
+    if (-not $match.Success) {
+        throw "Package '$PackageName' was not found in $CargoLockPath"
+    }
+    return $match.Groups['version'].Value
+}
+
+function Get-CargoRegistryCrateSource {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackageName,
+        [Parameter(Mandatory = $true)][string]$Version
+    )
+
+    $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $HOME '.cargo' }
+    $registrySourceRoot = Join-Path $cargoHome 'registry/src'
+    if (-not (Test-Path -LiteralPath $registrySourceRoot -PathType Container)) {
+        throw "Cargo registry source directory not found: $registrySourceRoot"
+    }
+
+    $candidates = @(
+        Get-ChildItem -LiteralPath $registrySourceRoot -Directory -ErrorAction Stop |
+            ForEach-Object {
+                Get-ChildItem -LiteralPath $_.FullName -Directory -Filter "$PackageName-$Version" -ErrorAction SilentlyContinue
+            }
+    )
+    foreach ($candidate in $candidates) {
+        $manifestPath = Join-Path $candidate.FullName 'Cargo.toml'
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            continue
+        }
+        $manifestText = [System.IO.File]::ReadAllText($manifestPath)
+        if ($manifestText -match '(?m)^name\s*=\s*"' + [regex]::Escape($PackageName) + '"\s*$' -and
+            $manifestText -match '(?m)^version\s*=\s*"' + [regex]::Escape($Version) + '"\s*$') {
+            return $candidate.FullName
         }
     }
 
-    pub fn with_delegate_and_task_failure_handler(
-        delegate: Arc<dyn CodeModeSessionDelegate>,
-        _task_failure_handler: Arc<dyn Fn(String) + Send + Sync>,
-    ) -> Self {
-        Self::with_delegate(delegate)
-    }
-
-    pub async fn execute(&self, request: ExecuteRequest) -> Result<StartedCell, String> {
-        let cell_id = self.allocate_cell_id();
-        let response = unavailable_response(cell_id.clone(), request_summary(&request));
-        self.delegate.cell_closed(&cell_id);
-        let (response_tx, response_rx) = oneshot::channel();
-        let _ = response_tx.send(response);
-        Ok(StartedCell::new(cell_id, response_rx))
-    }
-
-    pub async fn execute_to_pending(
-        &self,
-        request: ExecuteRequest,
-    ) -> Result<ExecuteToPendingOutcome, String> {
-        let cell_id = self.allocate_cell_id();
-        let response = unavailable_response(cell_id.clone(), request_summary(&request));
-        self.delegate.cell_closed(&cell_id);
-        Ok(ExecuteToPendingOutcome::Completed(response))
-    }
-
-    pub async fn wait(&self, request: WaitRequest) -> Result<WaitOutcome, String> {
-        let response = unavailable_response(request.cell_id, None);
-        Ok(WaitOutcome::MissingCell(response))
-    }
-
-    pub async fn terminate(&self, cell_id: CellId) -> Result<WaitOutcome, String> {
-        let response = unavailable_response(cell_id, None);
-        Ok(WaitOutcome::MissingCell(response))
-    }
-
-    pub async fn wait_to_pending(
-        &self,
-        request: WaitToPendingRequest,
-    ) -> Result<WaitToPendingOutcome, String> {
-        let response = unavailable_response(request.cell_id, None);
-        Ok(WaitToPendingOutcome::MissingCell(response))
-    }
-
-    pub async fn shutdown(&self) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn allocate_cell_id(&self) -> CellId {
-        CellId::new(self.next_cell_id.fetch_add(1, Ordering::Relaxed).to_string())
-    }
+    throw "Could not locate $PackageName $Version in $registrySourceRoot after cargo fetch."
 }
 
-impl Default for InProcessCodeModeSession {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+function Restore-RustyV8IcuDataBlob {
+    param(
+        [Parameter(Mandatory = $true)][string]$V8Version,
+        [Parameter(Mandatory = $true)][string]$RustyV8SourceDir
+    )
 
-impl CodeModeSession for InProcessCodeModeSession {
-    fn execute<'a>(
-        &'a self,
-        request: ExecuteRequest,
-    ) -> CodeModeSessionResultFuture<'a, StartedCell> {
-        Box::pin(InProcessCodeModeSession::execute(self, request))
-    }
-
-    fn wait<'a>(&'a self, request: WaitRequest) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
-        Box::pin(InProcessCodeModeSession::wait(self, request))
-    }
-
-    fn terminate<'a>(&'a self, cell_id: CellId) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
-        Box::pin(InProcessCodeModeSession::terminate(self, cell_id))
-    }
-
-    fn shutdown<'a>(&'a self) -> CodeModeSessionResultFuture<'a, ()> {
-        Box::pin(InProcessCodeModeSession::shutdown(self))
-    }
-}
-
-fn unavailable_response(cell_id: CellId, request_summary: Option<String>) -> RuntimeResponse {
-    let mut content_items = Vec::new();
-    if let Some(summary) = request_summary {
-        content_items.push(FunctionCallOutputContentItem::InputText { text: summary });
-    }
-    RuntimeResponse::Result {
-        cell_id,
-        content_items,
-        error_text: Some(UNAVAILABLE.to_string()),
-    }
-}
-
-fn request_summary(request: &ExecuteRequest) -> Option<String> {
-    if request.source.trim().is_empty() {
-        return None;
-    }
-    Some("JavaScript code mode was requested, but this build does not include V8.".to_string())
-}
-'@
-
-    $remoteSessionSource = @'
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use codex_code_mode_protocol::CellId;
-use codex_code_mode_protocol::CodeModeSession;
-use codex_code_mode_protocol::CodeModeSessionDelegate;
-use codex_code_mode_protocol::CodeModeSessionProvider;
-use codex_code_mode_protocol::CodeModeSessionProviderFuture;
-use codex_code_mode_protocol::CodeModeSessionResultFuture;
-use codex_code_mode_protocol::ExecuteRequest;
-use codex_code_mode_protocol::StartedCell;
-use codex_code_mode_protocol::WaitOutcome;
-use codex_code_mode_protocol::WaitRequest;
-
-use crate::InProcessCodeModeSession;
-use crate::NoopCodeModeSessionDelegate;
-
-/// Process-host provider is forced to the in-process unavailable stub on i686 musl.
-pub struct ProcessOwnedCodeModeSessionProvider {
-    _host_program: PathBuf,
-}
-
-impl ProcessOwnedCodeModeSessionProvider {
-    pub fn with_host_program(host_program: PathBuf) -> Self {
-        Self {
-            _host_program: host_program,
-        }
-    }
-}
-
-impl Default for ProcessOwnedCodeModeSessionProvider {
-    fn default() -> Self {
-        Self::with_host_program(PathBuf::from("codex-code-mode-host"))
-    }
-}
-
-impl CodeModeSessionProvider for ProcessOwnedCodeModeSessionProvider {
-    fn create_session<'a>(
-        &'a self,
-        delegate: Arc<dyn CodeModeSessionDelegate>,
-    ) -> CodeModeSessionProviderFuture<'a> {
-        Box::pin(async move {
-            let session: Arc<dyn CodeModeSession> =
-                Arc::new(InProcessCodeModeSession::with_delegate(delegate));
-            Ok(session)
-        })
-    }
-}
-
-/// Compatibility wrapper around the in-process unavailable session.
-pub struct ProcessOwnedCodeModeSession {
-    inner: InProcessCodeModeSession,
-}
-
-impl ProcessOwnedCodeModeSession {
-    pub fn new() -> Self {
-        Self {
-            inner: InProcessCodeModeSession::new(),
+    $knownMetadata = @{
+        '149.2.0' = [ordered]@{
+            icu_commit = 'ee5f27adc28bd3f15b2c293f726d14d2e336cbd5'
+            git_blob = 'd1a12cb93065157498a11ff5f4b9a6501ee22506'
+            bytes = [int64]10822192
+            sha256 = '1cf67874b5a87a8363a86fb3f81e3cbbed54d389062dab8fb52308d5cf8c8612'
         }
     }
 
-    pub fn with_delegate(delegate: Arc<dyn CodeModeSessionDelegate>) -> Self {
-        Self {
-            inner: InProcessCodeModeSession::with_delegate(delegate),
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rusty-v8-icu-{0}-{1}" -f $V8Version, [guid]::NewGuid().ToString('N'))
+    $rustyV8Repo = Join-Path $tempRoot 'rusty-v8'
+    $icuRepo = Join-Path $tempRoot 'icu'
+    $archivePath = Join-Path $tempRoot 'icu-data.tar'
+    $extractRoot = Join-Path $tempRoot 'extract'
+    $targetPath = Join-Path $RustyV8SourceDir 'third_party/icu/common/icudtl.dat'
+    $restored = $false
+
+    New-Item -ItemType Directory -Force -Path $rustyV8Repo, $icuRepo, $extractRoot | Out-Null
+    try {
+        & git -C $rustyV8Repo init --quiet
+        if ($LASTEXITCODE -ne 0) { throw 'Could not initialise the temporary rusty_v8 metadata repository.' }
+        & git -C $rustyV8Repo remote add origin 'https://github.com/denoland/rusty_v8.git'
+        if ($LASTEXITCODE -ne 0) { throw 'Could not configure the rusty_v8 metadata remote.' }
+        & git -C $rustyV8Repo fetch --quiet --depth 1 origin "refs/tags/v$V8Version"
+        if ($LASTEXITCODE -ne 0) { throw "Could not fetch rusty_v8 tag v$V8Version." }
+
+        $icuTreeEntry = [string](& git -C $rustyV8Repo ls-tree FETCH_HEAD third_party/icu)
+        if ($LASTEXITCODE -ne 0 -or $icuTreeEntry -notmatch '^160000 commit (?<sha>[0-9a-f]{40})\s+third_party/icu$') {
+            throw "Could not resolve the ICU submodule revision from rusty_v8 v$V8Version. Output: $icuTreeEntry"
+        }
+        $icuCommit = $Matches['sha']
+
+        & git -C $icuRepo init --quiet
+        if ($LASTEXITCODE -ne 0) { throw 'Could not initialise the temporary ICU repository.' }
+        & git -C $icuRepo remote add origin 'https://chromium.googlesource.com/chromium/deps/icu.git'
+        if ($LASTEXITCODE -ne 0) { throw 'Could not configure the Chromium ICU remote.' }
+        & git -C $icuRepo fetch --quiet --depth 1 origin $icuCommit
+        if ($LASTEXITCODE -ne 0) { throw "Could not fetch Chromium ICU revision $icuCommit." }
+
+        $expectedGitBlob = ([string](& git -C $icuRepo rev-parse 'FETCH_HEAD:common/icudtl.dat')).Trim()
+        if ($LASTEXITCODE -ne 0 -or $expectedGitBlob -notmatch '^[0-9a-f]{40}$') {
+            throw "Could not resolve common/icudtl.dat at ICU revision $icuCommit."
+        }
+
+        $existingMatches = $false
+        if (Test-Path -LiteralPath $targetPath -PathType Leaf) {
+            $existingGitBlob = ([string](& git hash-object $targetPath)).Trim()
+            $existingMatches = $LASTEXITCODE -eq 0 -and $existingGitBlob -eq $expectedGitBlob
+        }
+
+        if (-not $existingMatches) {
+            & git -C $icuRepo archive --format=tar -o $archivePath FETCH_HEAD common/icudtl.dat
+            if ($LASTEXITCODE -ne 0) { throw "Could not archive common/icudtl.dat from ICU revision $icuCommit." }
+            & tar -xf $archivePath -C $extractRoot
+            if ($LASTEXITCODE -ne 0) { throw 'Could not extract the ICU data archive.' }
+            $extractedPath = Join-Path $extractRoot 'common/icudtl.dat'
+            if (-not (Test-Path -LiteralPath $extractedPath -PathType Leaf)) {
+                throw "Extracted ICU data file not found: $extractedPath"
+            }
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
+            Copy-Item -LiteralPath $extractedPath -Destination $targetPath -Force
+            $restored = $true
+        }
+
+        $actualGitBlob = ([string](& git hash-object $targetPath)).Trim()
+        if ($LASTEXITCODE -ne 0 -or $actualGitBlob -ne $expectedGitBlob) {
+            throw "ICU data Git blob verification failed: expected $expectedGitBlob, got $actualGitBlob"
+        }
+        $item = Get-Item -LiteralPath $targetPath
+        $sha256 = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        if ($knownMetadata.ContainsKey($V8Version)) {
+            $known = $knownMetadata[$V8Version]
+            if ($icuCommit -ne $known.icu_commit -or
+                $actualGitBlob -ne $known.git_blob -or
+                $item.Length -ne $known.bytes -or
+                $sha256 -ne $known.sha256) {
+                throw "Known rusty_v8 $V8Version ICU metadata mismatch. Commit=$icuCommit Blob=$actualGitBlob Bytes=$($item.Length) SHA256=$sha256"
+            }
+        }
+
+        Write-Host "Verified rusty_v8 $V8Version ICU data: commit=$icuCommit blob=$actualGitBlob bytes=$($item.Length) sha256=$sha256 restored=$restored"
+        return [pscustomobject]@{
+            path = $targetPath
+            restored = $restored
+            icu_commit = $icuCommit
+            git_blob = $actualGitBlob
+            bytes = [int64]$item.Length
+            sha256 = $sha256
+        }
+    } finally {
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Restore-RustyV8ChromiumRustVendor {
+    param(
+        [Parameter(Mandatory = $true)][string]$V8Version,
+        [Parameter(Mandatory = $true)][string]$RustyV8SourceDir
+    )
+
+    $knownMetadata = @{
+        '149.2.0' = [ordered]@{
+            rust_commit = '2b055f4ecac78bbf34a0d34217c699b7b09b44dd'
+            vendor_tree = '2d3dd155f076c848a7311679d0015524e338c937'
+            files = 9548
         }
     }
-}
 
-impl Default for ProcessOwnedCodeModeSession {
-    fn default() -> Self {
-        Self::new()
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rusty-v8-rust-vendor-{0}-{1}" -f $V8Version, [guid]::NewGuid().ToString('N'))
+    $rustyV8Repo = Join-Path $tempRoot 'rusty-v8'
+    $chromiumRustRepo = Join-Path $tempRoot 'chromium-rust'
+    $archivePath = Join-Path $tempRoot 'chromium-rust-vendor.tar'
+    $extractRoot = Join-Path $tempRoot 'extract'
+    $targetRustRoot = Join-Path $RustyV8SourceDir 'third_party/rust'
+    $targetVendor = Join-Path $targetRustRoot 'chromium_crates_io/vendor'
+    $markerPath = Join-Path $RustyV8SourceDir '.codex-cli-sync-rust-vendor.json'
+    $restored = $false
+
+    $sentinels = @(
+        'chromium_crates_io/vendor/icu_calendar_data-v2/build.rs',
+        'chromium_crates_io/vendor/cxx-v1/include/cxx.h',
+        'chromium_crates_io/vendor/serde-v1/src/lib.rs'
+    )
+
+    New-Item -ItemType Directory -Force -Path $rustyV8Repo, $chromiumRustRepo, $extractRoot | Out-Null
+    try {
+        & git -C $rustyV8Repo init --quiet
+        if ($LASTEXITCODE -ne 0) { throw 'Could not initialise the temporary rusty_v8 metadata repository for Chromium Rust.' }
+        & git -C $rustyV8Repo remote add origin 'https://github.com/denoland/rusty_v8.git'
+        if ($LASTEXITCODE -ne 0) { throw 'Could not configure the rusty_v8 metadata remote for Chromium Rust.' }
+        & git -C $rustyV8Repo fetch --quiet --depth 1 origin "refs/tags/v$V8Version"
+        if ($LASTEXITCODE -ne 0) { throw "Could not fetch rusty_v8 tag v$V8Version for Chromium Rust metadata." }
+
+        $rustTreeEntry = [string](& git -C $rustyV8Repo ls-tree FETCH_HEAD third_party/rust)
+        if ($LASTEXITCODE -ne 0 -or $rustTreeEntry -notmatch '^160000 commit (?<sha>[0-9a-f]{40})\s+third_party/rust$') {
+            throw "Could not resolve the Chromium Rust submodule revision from rusty_v8 v$V8Version. Output: $rustTreeEntry"
+        }
+        $rustCommit = $Matches['sha']
+
+        & git -C $chromiumRustRepo init --quiet
+        if ($LASTEXITCODE -ne 0) { throw 'Could not initialise the temporary Chromium Rust repository.' }
+        & git -C $chromiumRustRepo remote add origin 'https://chromium.googlesource.com/chromium/src/third_party/rust'
+        if ($LASTEXITCODE -ne 0) { throw 'Could not configure the Chromium Rust remote.' }
+        & git -C $chromiumRustRepo fetch --quiet --depth 1 --filter=blob:none origin $rustCommit
+        if ($LASTEXITCODE -ne 0) { throw "Could not fetch Chromium Rust revision $rustCommit." }
+
+        $vendorTree = ([string](& git -C $chromiumRustRepo rev-parse 'FETCH_HEAD:chromium_crates_io/vendor')).Trim()
+        if ($LASTEXITCODE -ne 0 -or $vendorTree -notmatch '^[0-9a-f]{40}$') {
+            throw "Could not resolve chromium_crates_io/vendor at Chromium Rust revision $rustCommit."
+        }
+        $vendorFileCount = @(& git -C $chromiumRustRepo ls-tree -r --name-only FETCH_HEAD chromium_crates_io/vendor).Count
+        if ($LASTEXITCODE -ne 0 -or $vendorFileCount -lt 1) {
+            throw "Chromium Rust vendor tree $vendorTree is empty."
+        }
+
+        if ($knownMetadata.ContainsKey($V8Version)) {
+            $known = $knownMetadata[$V8Version]
+            if ($rustCommit -ne $known.rust_commit -or $vendorTree -ne $known.vendor_tree -or $vendorFileCount -ne $known.files) {
+                throw "Known rusty_v8 $V8Version Chromium Rust metadata mismatch. Commit=$rustCommit Tree=$vendorTree Files=$vendorFileCount"
+            }
+        }
+
+        $markerMatches = $false
+        $marker = $null
+        if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
+            try {
+                $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+                $markerMatches =
+                    $marker.v8_version -eq $V8Version -and
+                    $marker.rust_commit -eq $rustCommit -and
+                    $marker.vendor_tree -eq $vendorTree -and
+                    [int]$marker.files -eq $vendorFileCount
+            } catch {
+                $markerMatches = $false
+            }
+        }
+        foreach ($sentinel in $sentinels) {
+            if (-not (Test-Path -LiteralPath (Join-Path $targetRustRoot $sentinel) -PathType Leaf)) {
+                $markerMatches = $false
+            }
+        }
+
+        $archiveSha256 = if ($markerMatches -and $marker.PSObject.Properties['archive_sha256']) { [string]$marker.archive_sha256 } else { $null }
+        $archiveBytes = if ($markerMatches -and $marker.PSObject.Properties['archive_bytes']) { [int64]$marker.archive_bytes } else { [int64]0 }
+        if (-not $markerMatches) {
+            & git -C $chromiumRustRepo archive --format=tar -o $archivePath FETCH_HEAD chromium_crates_io/vendor
+            if ($LASTEXITCODE -ne 0) { throw "Could not archive Chromium Rust vendor tree $vendorTree." }
+            $archiveItem = Get-Item -LiteralPath $archivePath
+            $archiveBytes = [int64]$archiveItem.Length
+            $archiveSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            & tar -xf $archivePath -C $extractRoot
+            if ($LASTEXITCODE -ne 0) { throw 'Could not extract the Chromium Rust vendor archive.' }
+            $extractedVendor = Join-Path $extractRoot 'chromium_crates_io/vendor'
+            if (-not (Test-Path -LiteralPath $extractedVendor -PathType Container)) {
+                throw "Extracted Chromium Rust vendor directory not found: $extractedVendor"
+            }
+            Remove-Item -LiteralPath $targetVendor -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetVendor) | Out-Null
+            Move-Item -LiteralPath $extractedVendor -Destination $targetVendor
+            $restored = $true
+        }
+
+        $sentinelBlobs = [ordered]@{}
+        foreach ($sentinel in $sentinels) {
+            $targetPath = Join-Path $targetRustRoot $sentinel
+            if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
+                throw "Chromium Rust vendor sentinel is missing after restoration: $targetPath"
+            }
+            $expectedBlob = ([string](& git -C $chromiumRustRepo rev-parse "FETCH_HEAD:$sentinel")).Trim()
+            $actualBlob = ([string](& git hash-object $targetPath)).Trim()
+            if ($LASTEXITCODE -ne 0 -or $actualBlob -ne $expectedBlob) {
+                throw "Chromium Rust vendor sentinel verification failed for $sentinel. Expected=$expectedBlob Actual=$actualBlob"
+            }
+            $sentinelBlobs[$sentinel] = $actualBlob
+        }
+
+        $markerData = [ordered]@{
+            v8_version = $V8Version
+            rust_commit = $rustCommit
+            vendor_tree = $vendorTree
+            files = $vendorFileCount
+            archive_bytes = $archiveBytes
+            archive_sha256 = $archiveSha256
+            sentinel_blobs = $sentinelBlobs
+        }
+        [System.IO.File]::WriteAllText(
+            $markerPath,
+            ($markerData | ConvertTo-Json -Depth 8),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+
+        Write-Host "Verified rusty_v8 $V8Version Chromium Rust vendor: commit=$rustCommit tree=$vendorTree files=$vendorFileCount restored=$restored"
+        return [pscustomobject]@{
+            path = $targetVendor
+            restored = $restored
+            rust_commit = $rustCommit
+            vendor_tree = $vendorTree
+            files = $vendorFileCount
+            archive_bytes = $archiveBytes
+            archive_sha256 = $archiveSha256
+            sentinel_blobs = $sentinelBlobs
+        }
+    } finally {
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
-impl CodeModeSession for ProcessOwnedCodeModeSession {
-    fn execute<'a>(
-        &'a self,
-        request: ExecuteRequest,
-    ) -> CodeModeSessionResultFuture<'a, StartedCell> {
-        Box::pin(InProcessCodeModeSession::execute(&self.inner, request))
+function Enable-I686MuslRustyV8SourceBuild {
+    param([Parameter(Mandatory = $true)][string]$CodexRsDir)
+
+    $codeModeCargoToml = Join-Path $CodexRsDir 'code-mode/Cargo.toml'
+    $cargoLockPath = Join-Path $CodexRsDir 'Cargo.lock'
+    if (-not (Test-Path -LiteralPath $codeModeCargoToml -PathType Leaf)) {
+        throw "Required code-mode manifest not found: $codeModeCargoToml"
     }
 
-    fn wait<'a>(&'a self, request: WaitRequest) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
-        Box::pin(InProcessCodeModeSession::wait(&self.inner, request))
+    $codeModeManifest = [System.IO.File]::ReadAllText($codeModeCargoToml)
+    foreach ($required in @(
+        'sandbox = ["v8/v8_enable_sandbox"]',
+        'deno_core_icudata = { workspace = true }',
+        'v8 = { workspace = true }'
+    )) {
+        if (-not $codeModeManifest.Contains($required)) {
+            throw "Upstream code-mode dependency contract changed; missing '$required' in $codeModeCargoToml"
+        }
     }
 
-    fn terminate<'a>(&'a self, cell_id: CellId) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
-        Box::pin(InProcessCodeModeSession::terminate(&self.inner, cell_id))
+    $v8Version = Get-CargoLockedPackageVersion -CargoLockPath $cargoLockPath -PackageName 'v8'
+    $env:V8_FROM_SOURCE = '1'
+    $env:PYTHON = if ($env:PYTHON) { $env:PYTHON } else { 'python3' }
+    Remove-Item Env:CLANG_BASE_PATH -ErrorAction SilentlyContinue
+    $env:LIBCLANG_PATH = if ($env:LIBCLANG_PATH) { $env:LIBCLANG_PATH } else { '/usr/lib/llvm-19/lib' }
+    $env:NINJA = if ($env:NINJA) { $env:NINJA } else { '/usr/bin/ninja' }
+    $env:PRINT_GN_ARGS = '1'
+    $env:NUM_JOBS = if ($env:NUM_JOBS) { $env:NUM_JOBS } else { '2' }
+    $env:GN_ARGS = if ($env:GN_ARGS) {
+        $env:GN_ARGS
+    } else {
+        'v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
     }
 
-    fn shutdown<'a>(&'a self) -> CodeModeSessionResultFuture<'a, ()> {
-        Box::pin(InProcessCodeModeSession::shutdown(&self.inner))
-    }
+    Write-Host "Configured rusty_v8 $v8Version to build from source for i686 Linux."
+    Write-Host "rusty_v8 GN_ARGS: $env:GN_ARGS"
+    Write-Host "rusty_v8 compiler: Chromium bundled Clang/Compiler-RT (CLANG_BASE_PATH intentionally unset)."
+    return $v8Version
 }
 
-// Keep the unused import intentional for API parity with the full build path.
-#[allow(dead_code)]
-fn _noop_delegate() -> NoopCodeModeSessionDelegate {
-    NoopCodeModeSessionDelegate
-}
-'@
+function Remove-StaleRustyV8GnOutput {
+    param(
+        [Parameter(Mandatory = $true)][string]$CodexRsDir,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
 
-    [System.IO.File]::WriteAllText((Join-Path $srcDir "lib.rs"), $libSource, $utf8)
-    [System.IO.File]::WriteAllText((Join-Path $srcDir "v8_init.rs"), $v8InitSource, $utf8)
-    [System.IO.File]::WriteAllText((Join-Path $srcDir "service.rs"), $serviceSource, $utf8)
-    [System.IO.File]::WriteAllText((Join-Path $srcDir "remote_session.rs"), $remoteSessionSource, $utf8)
+    $gnOutDir = Join-Path $CodexRsDir "target/$Target/release/gn_out"
+    $argsPath = Join-Path $gnOutDir 'args.gn'
+    if (-not (Test-Path -LiteralPath $argsPath -PathType Leaf)) {
+        return $false
+    }
 
+    $argsText = [System.IO.File]::ReadAllText($argsPath)
+    $usesForcedSystemClang = $argsText -match 'clang_base_path\s*=\s*"/usr/lib/llvm-[^"]+"'
+    $usesTargetMuslHeaders = $argsText -match 'rusty_v8_zig_lib_dir\s*=\s*"[^"]+"'
+    $usesIsolatedSnapshotToolchain = $argsText -match 'v8_snapshot_toolchain\s*=\s*"//build/toolchain/linux:clang_x86_v8_x86_glibc"'
+
+    $toolchainPath = Join-Path $gnOutDir 'toolchain.ninja'
+    $usesLibcxxCompatibleMuslHeaderOrder = $false
+    $usesLibcxxMuslConfiguration = $false
+    $usesBundledCompilerBuiltinHeaders = $false
+    if (Test-Path -LiteralPath $toolchainPath -PathType Leaf) {
+        $toolchainText = [System.IO.File]::ReadAllText($toolchainPath)
+        $usesLibcxxCompatibleMuslHeaderOrder =
+            $toolchainText.Contains('-idirafter') -and
+            $toolchainText.Contains('/libc/include/generic-musl')
+        $usesLibcxxMuslConfiguration = $toolchainText.Contains('-DANDROID_HOST_MUSL')
+        $usesBundledCompilerBuiltinHeaders =
+            $toolchainText.Contains('-nostdlibinc') -and
+            -not ($toolchainText -match '(^|\s)-nostdinc(\s|$)') -and
+            -not ($toolchainText -match '-idirafter[^\s]*/lib/include(?=\s|$)')
+    }
+
+    if (-not $usesForcedSystemClang -and
+        $usesTargetMuslHeaders -and
+        $usesIsolatedSnapshotToolchain -and
+        $usesLibcxxCompatibleMuslHeaderOrder -and
+        $usesLibcxxMuslConfiguration -and
+        $usesBundledCompilerBuiltinHeaders) {
+        return $false
+    }
+
+    $reasons = @()
+    if ($usesForcedSystemClang) {
+        $reasons += 'forced an incompatible system Clang'
+    }
+    if (-not $usesTargetMuslHeaders) {
+        $reasons += 'did not compile target objects against Zig musl headers'
+    }
+    if (-not $usesIsolatedSnapshotToolchain) {
+        $reasons += 'did not isolate the runnable x86 snapshot toolchain on glibc'
+    }
+    if (-not $usesLibcxxCompatibleMuslHeaderOrder) {
+        $reasons += 'placed Zig musl headers before libc++ compatibility wrappers'
+    }
+    if (-not $usesLibcxxMuslConfiguration) {
+        $reasons += 'did not enable Chromium libc++ musl configuration'
+    }
+    if (-not $usesBundledCompilerBuiltinHeaders) {
+        $reasons += 'mixed Zig intrinsic headers with Chromium Clang'
+    }
+
+    Remove-Item -LiteralPath $gnOutDir -Recurse -Force
+    Write-Host "Removed stale rusty_v8 GN output because it $($reasons -join '; '): $gnOutDir"
     return $true
 }
 
@@ -717,7 +799,8 @@ $codexRsDir = Join-Path $sourceDir "codex-rs"
 $cliCargoTomlPath = Join-Path $codexRsDir "cli/Cargo.toml"
 $addedVendoredOpenSsl = Enable-I686MuslVendoredOpenSsl -CargoTomlPath $cliCargoTomlPath
 $enabledBlake3Pure = Enable-I686MuslBlake3PureFeature -CargoTomlPath $cliCargoTomlPath
-$disabledV8CodeMode = Disable-I686MuslV8CodeMode -CodexRsDir $codexRsDir
+$rustyV8Version = Enable-I686MuslRustyV8SourceBuild -CodexRsDir $codexRsDir
+$mcpServerRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path (Join-Path $codexRsDir "mcp-server/src/lib.rs") -Minimum 256
 $patchedLinuxSandboxSyscalls = Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $codexRsDir
 Set-I686MuslBuildEnvironment
 
@@ -742,6 +825,7 @@ try {
     }
 
     Write-Host "i686 OpenSSL CFLAGS: $env:CFLAGS_i686_unknown_linux_musl"
+    Write-Host "Building rusty_v8 $rustyV8Version from source for $LinuxTarget (V8_FROM_SOURCE=$env:V8_FROM_SOURCE)."
 
     & rustc --print target-libdir --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
@@ -754,6 +838,16 @@ try {
         throw "cargo clean for openssl-sys failed with exit code $LASTEXITCODE"
     }
 
+    cargo fetch --locked --target $LinuxTarget
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo fetch failed with exit code $LASTEXITCODE"
+    }
+    $rustyV8SourceDir = Get-CargoRegistryCrateSource -PackageName 'v8' -Version $rustyV8Version
+    $rustyV8IcuData = Restore-RustyV8IcuDataBlob -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
+    $rustyV8RustVendor = Restore-RustyV8ChromiumRustVendor -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
+    $rustyV8I686Abi = Patch-RustyV8I686Abi -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
+    $rustyV8I686NativeMusl = Patch-RustyV8I686NativeMusl -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
+    $removedStaleV8GnOutput = Remove-StaleRustyV8GnOutput -CodexRsDir $codexRsDir -Target $LinuxTarget
     cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
         throw "cargo zigbuild failed with exit code $LASTEXITCODE"
@@ -763,6 +857,37 @@ try {
 }
 
 $targetDir = Join-Path $sourceDir "codex-rs/target/$LinuxTarget/release"
+$v8ArchivePath = Join-Path $targetDir "gn_out/obj/librusty_v8.a"
+$v8GnArgsPath = Join-Path $targetDir "gn_out/args.gn"
+if (-not (Test-Path -LiteralPath $v8ArchivePath -PathType Leaf)) {
+    throw "rusty_v8 source archive was not produced: $v8ArchivePath"
+}
+if (-not (Test-Path -LiteralPath $v8GnArgsPath -PathType Leaf)) {
+    throw "rusty_v8 GN args were not produced: $v8GnArgsPath"
+}
+$v8GnArgsText = [System.IO.File]::ReadAllText($v8GnArgsPath)
+if ($v8GnArgsText -notmatch 'target_cpu\s*=\s*"x86"' -or $v8GnArgsText -notmatch 'v8_target_cpu\s*=\s*"x86"') {
+    throw "rusty_v8 GN output is not configured for x86: $v8GnArgsPath"
+}
+
+$env:V8_ARCHIVE_PATH = $v8ArchivePath
+$env:V8_MEMBER_PATH = "/tmp/rusty-v8-i686-member-$PID.o"
+$v8ObjectFileOutput = [string](& bash -lc @'
+set -euo pipefail
+member="$(ar t "$V8_ARCHIVE_PATH" | head -n 1)"
+test -n "$member"
+ar p "$V8_ARCHIVE_PATH" "$member" > "$V8_MEMBER_PATH"
+file "$V8_MEMBER_PATH"
+rm -f "$V8_MEMBER_PATH"
+'@)
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not inspect a member of the rusty_v8 archive."
+}
+Write-Host $v8ObjectFileOutput
+if ($v8ObjectFileOutput -notmatch 'ELF 32-bit' -or $v8ObjectFileOutput -notmatch 'Intel 80386') {
+    throw "rusty_v8 archive is not a real 32-bit i386 build: $v8ObjectFileOutput"
+}
+
 $codexPath = Join-Path $targetDir "codex"
 if (-not (Test-Path -LiteralPath $codexPath -PathType Leaf)) {
     throw "Build output not found: $codexPath"
@@ -812,8 +937,8 @@ Files:
 - certs/ca-certificates.crt
 
 Compatibility note:
-  This i686 musl build does not include JavaScript code mode because rusty_v8
-  does not publish a prebuilt V8 archive for i686-unknown-linux-musl.
+  JavaScript code mode is included. rusty_v8 is compiled from source as a real
+  32-bit x86 V8 static archive during the GitHub Actions build.
 
 Tiny Core example:
   install -m 755 codex /home/tc/codex
@@ -839,10 +964,16 @@ $manifest = [ordered]@{
     custom_runtime_patches     = "not_applied"
     compatibility_patches      = @(
         [ordered]@{
-            name   = "disable_v8_code_mode_for_i686_musl"
-            applied = [bool]$disabledV8CodeMode
-            reason = "rusty_v8 v147.4.0 does not publish librusty_v8_release_i686-unknown-linux-musl.a.gz"
-            effect = "JavaScript code mode returns an unavailable error on this i686 musl package; standard Codex CLI behavior remains built from upstream source."
+            name    = "build_rusty_v8_from_source_for_i686_musl"
+            applied = $env:V8_FROM_SOURCE -eq "1"
+            reason  = "rusty_v8 $rustyV8Version has no published i686-unknown-linux-musl archive, so CI builds the real x86 V8 archive from source."
+            effect  = "JavaScript code mode remains enabled in the i686 musl package."
+        },
+        [ordered]@{
+            name    = "raise_mcp_server_recursion_limit"
+            applied = $true
+            reason  = "Current upstream codex-mcp-server type queries exceed Rust's default recursion depth in release builds."
+            effect  = "codex-mcp-server builds deterministically with recursion_limit 256."
         },
         [ordered]@{
             name   = "i686_musl_linux_sandbox_syscall_compile_fix"
@@ -860,7 +991,33 @@ $manifest = [ordered]@{
     build_adjustments          = [ordered]@{
         vendored_openssl_for_i686_musl = [bool]$addedVendoredOpenSsl
         blake3_pure_for_i686_musl = [bool]$enabledBlake3Pure
-        v8_code_mode_disabled_for_i686_musl = [bool]$disabledV8CodeMode
+        rusty_v8_built_from_source_for_i686_musl = $env:V8_FROM_SOURCE -eq "1"
+        rusty_v8_version = $rustyV8Version
+        rusty_v8_gn_args = $env:GN_ARGS
+        rusty_v8_num_jobs = $env:NUM_JOBS
+        rusty_v8_compiler_toolchain = "Chromium bundled Clang/Compiler-RT"
+        rusty_v8_clang_base_path_forced = $false
+        rusty_v8_stale_system_clang_gn_output_removed = [bool]$removedStaleV8GnOutput
+        rusty_v8_icu_data_path = $rustyV8IcuData.path
+        rusty_v8_icu_data_restored = [bool]$rustyV8IcuData.restored
+        rusty_v8_icu_revision = $rustyV8IcuData.icu_commit
+        rusty_v8_icu_git_blob = $rustyV8IcuData.git_blob
+        rusty_v8_icu_bytes = [int64]$rustyV8IcuData.bytes
+        rusty_v8_icu_sha256 = $rustyV8IcuData.sha256
+        rusty_v8_chromium_rust_vendor_path = $rustyV8RustVendor.path
+        rusty_v8_chromium_rust_vendor_restored = [bool]$rustyV8RustVendor.restored
+        rusty_v8_chromium_rust_revision = $rustyV8RustVendor.rust_commit
+        rusty_v8_chromium_rust_vendor_tree = $rustyV8RustVendor.vendor_tree
+        rusty_v8_chromium_rust_vendor_files = [int]$rustyV8RustVendor.files
+        rusty_v8_chromium_rust_vendor_archive_bytes = [int64]$rustyV8RustVendor.archive_bytes
+        rusty_v8_chromium_rust_vendor_archive_sha256 = $rustyV8RustVendor.archive_sha256
+        rusty_v8_chromium_rust_vendor_sentinel_blobs = $rustyV8RustVendor.sentinel_blobs
+        rusty_v8_i686_abi_patch = $rustyV8I686Abi
+        rusty_v8_i686_native_musl_patch = $rustyV8I686NativeMusl
+        mcp_server_recursion_limit_256 = $true
+        mcp_server_recursion_limit_text_changed = [bool]$mcpServerRecursionLimitPatched
+        rusty_v8_archive_path = $v8ArchivePath
+        rusty_v8_archive_member_file_output = $v8ObjectFileOutput
         linux_sandbox_syscalls_patched_for_i686_musl = [bool]$patchedLinuxSandboxSyscalls
         openssl_no_c11_atomics_for_i686_musl = $true
         openssl_broken_clang_atomics_for_i686_musl = $true
@@ -872,6 +1029,7 @@ $manifest = [ordered]@{
     verification              = [ordered]@{
         version_output = $versionOutput
         file_output    = $fileOutput
+        rusty_v8_object_file_output = $v8ObjectFileOutput
     }
     artifact                  = [ordered]@{
         name   = [System.IO.Path]::GetFileName($bundlePath)

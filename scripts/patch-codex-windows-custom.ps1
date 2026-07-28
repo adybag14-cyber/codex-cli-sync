@@ -32,6 +32,32 @@ function Set-Text {
     [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Ensure-RustCrateRecursionLimit {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$Minimum = 256
+    )
+
+    $text = Get-Text -Path $Path
+    $pattern = '(?m)^#!\[recursion_limit\s*=\s*"(?<value>\d+)"\]\s*\r?\n'
+    $match = [regex]::Match($text, $pattern)
+    if ($match.Success) {
+        $current = [int]$match.Groups['value'].Value
+        if ($current -ge $Minimum) {
+            Write-Host "Kept: Rust recursion limit $current in $Path"
+            return $false
+        }
+        $regex = [regex]::new($pattern)
+        $text = $regex.Replace($text, "#![recursion_limit = `"$Minimum`"]`n", 1)
+    } else {
+        $text = "#![recursion_limit = `"$Minimum`"]`n" + $text
+    }
+
+    Set-Text -Path $Path -Text $text
+    Write-Host "Patched: raise Rust recursion limit to $Minimum in $Path"
+    return $true
+}
+
 function Replace-Once {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -317,6 +343,9 @@ $loginServerPath = Get-SourceFile -RelativePath "codex-rs\login\src\server.rs"
 $loginServerE2ePath = Get-SourceFile -RelativePath "codex-rs\login\tests\suite\login_server_e2e.rs"
 $tuiLibPath = Get-SourceFile -RelativePath "codex-rs\tui\src\lib.rs"
 $onboardingScreenPath = Get-SourceFile -RelativePath "codex-rs\tui\src\onboarding\onboarding_screen.rs"
+$mcpServerLibPath = Get-SourceFile -RelativePath "codex-rs\mcp-server\src\lib.rs"
+
+$mcpServerRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path $mcpServerLibPath -Minimum 256
 
 $permissionsReplacement = @'
                 approval_policy: if cfg!(target_os = "windows") {
@@ -478,6 +507,7 @@ Insert-AfterOnce `
 '@ `
     -Description "skip exec approval and sandbox policy on Windows"
 
+Assert-Contains -Path $mcpServerLibPath -Needle '#![recursion_limit = "256"]' -Description "mcp-server recursion limit"
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(AskForApproval::Never)' -Description "approval policy override"
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(PermissionProfile::Disabled)' -Description "permission profile override"
 Assert-Contains -Path $tuiLibPath -Needle 'let should_prompt_windows_sandbox_nux_at_startup = {' -Description "sandbox startup NUX disabled"
