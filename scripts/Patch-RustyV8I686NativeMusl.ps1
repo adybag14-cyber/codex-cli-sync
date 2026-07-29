@@ -15,10 +15,11 @@ function Patch-RustyV8I686NativeMusl {
     $buildRsPath = Join-Path $RustyV8SourceDir "build.rs"
     $compilerGnPath = Join-Path $RustyV8SourceDir "build/config/compiler/BUILD.gn"
     $cpuAbiGnPath = Join-Path $RustyV8SourceDir "build/config/compiler_cpu_abi.gn"
+    $knownRustTargetsPath = Join-Path $RustyV8SourceDir "build/rust/known-target-triples.txt"
     $linuxToolchainGnPath = Join-Path $RustyV8SourceDir "build/toolchain/linux/BUILD.gn"
     $requiredPaths = @($buildRsPath, $compilerGnPath, $linuxToolchainGnPath)
     if ($V8Version -eq "150.4.0") {
-        $requiredPaths += $cpuAbiGnPath
+        $requiredPaths += @($cpuAbiGnPath, $knownRustTargetsPath)
     }
     foreach ($path in $requiredPaths) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -99,7 +100,51 @@ function Patch-RustyV8I686NativeMusl {
         }
         $buildRs = $buildRs.Replace($crateVersionGnAnchor, $crateVersionGnPatch)
     }
+    if ($V8Version -eq "150.4.0") {
+        $muslX86Marker = 'Cross build (x64 host -> x86 musl target).'
+        if (-not $buildRs.Contains($muslX86Marker)) {
+            $unsupportedMuslAnchor = @(
+                '      other => panic!('
+                '        "musl builds are only supported for x86_64 and aarch64 (got {other})"'
+                '      ),'
+            ) -join "`n"
+            $x86MuslPatch = @(
+                '      "x86" => {'
+                '        // Cross build (x64 host -> x86 musl target). The default host'
+                '        // toolchain stays x64 glibc, while the audited GN args select'
+                '        // an x86 glibc snapshot toolchain. Target C/C++ and Rust stay musl.'
+                '      }'
+                '      other => panic!('
+                '        "musl builds are only supported for x86_64, aarch64, and x86 (got {other})"'
+                '      ),'
+            ) -join "`n"
+            if (-not $buildRs.Contains($unsupportedMuslAnchor)) {
+                throw "rusty_v8 upstream musl architecture contract changed: $buildRsPath"
+            }
+            $buildRs = $buildRs.Replace($unsupportedMuslAnchor, $x86MuslPatch)
+        }
+    }
     [System.IO.File]::WriteAllText($buildRsPath, $buildRs, [System.Text.UTF8Encoding]::new($false))
+
+    if ($V8Version -eq "150.4.0") {
+        $knownRustTargets = [System.IO.File]::ReadAllText($knownRustTargetsPath).Replace("`r`n", "`n")
+        $i686MuslTriple = 'i686-unknown-linux-musl'
+        if (-not ($knownRustTargets -split "`n").Contains($i686MuslTriple)) {
+            $i686GnuTriple = "i686-unknown-linux-gnu`n"
+            if (-not $knownRustTargets.Contains($i686GnuTriple)) {
+                throw "rusty_v8 Rust target allow-list contract changed: $knownRustTargetsPath"
+            }
+            $knownRustTargets = $knownRustTargets.Replace(
+                $i686GnuTriple,
+                "i686-unknown-linux-gnu`ni686-unknown-linux-musl`n"
+            )
+        }
+        [System.IO.File]::WriteAllText(
+            $knownRustTargetsPath,
+            $knownRustTargets,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+    }
 
     $compilerGn = [System.IO.File]::ReadAllText($compilerGnPath).Replace("`r`n", "`n")
     $gnArgumentPath = if ($V8Version -eq "150.4.0") { $cpuAbiGnPath } else { $compilerGnPath }
@@ -311,12 +356,39 @@ function Patch-RustyV8I686NativeMusl {
         }
         $linuxToolchainGn = $linuxToolchainGn.Replace($snapshotToolchainAnchor, $snapshotToolchainPatch)
     }
+    $snapshotToolchainStart = $linuxToolchainGn.IndexOf('clang_v8_toolchain("clang_x86_v8_x86_glibc")')
+    if ($snapshotToolchainStart -lt 0) {
+        throw "rusty_v8 isolated snapshot toolchain missing after patch: $linuxToolchainGnPath"
+    }
+    $snapshotToolchainEnd = $linuxToolchainGn.IndexOf("`n}`n", $snapshotToolchainStart)
+    if ($snapshotToolchainEnd -lt 0) {
+        throw "rusty_v8 isolated snapshot toolchain block is malformed: $linuxToolchainGnPath"
+    }
+    $snapshotToolchainBlock = $linuxToolchainGn.Substring(
+        $snapshotToolchainStart,
+        $snapshotToolchainEnd + 3 - $snapshotToolchainStart
+    )
+    if ($V8Version -eq "150.4.0" -and
+        -not $snapshotToolchainBlock.Contains('use_musl = false')) {
+        $snapshotToolchainBlockPatched = $snapshotToolchainBlock.Replace(
+            '    rusty_v8_zig_lib_dir = ""',
+            "    rusty_v8_zig_lib_dir = `"`"`n    use_musl = false"
+        )
+        if ($snapshotToolchainBlockPatched -eq $snapshotToolchainBlock) {
+            throw "rusty_v8 snapshot musl-isolation contract changed: $linuxToolchainGnPath"
+        }
+        $linuxToolchainGn = $linuxToolchainGn.Replace(
+            $snapshotToolchainBlock,
+            $snapshotToolchainBlockPatched
+        )
+    }
     [System.IO.File]::WriteAllText($linuxToolchainGnPath, $linuxToolchainGn, [System.Text.UTF8Encoding]::new($false))
 
     foreach ($check in @(
         @{ Path = $buildRsPath; Needle = 'rusty_v8_zig_lib_dir={zig_lib_dir:?}' },
         @{ Path = $buildRsPath; Needle = 'rusty_v8_crate_version={:?}' },
         @{ Path = $buildRsPath; Needle = 'clang_x86_v8_x86_glibc' },
+        @{ Path = $buildRsPath; Needle = if ($V8Version -eq "150.4.0") { 'Cross build (x64 host -> x86 musl target).' } else { 'rusty_v8 native build: target C/C++ uses Zig musl headers' } },
         @{ Path = $gnArgumentPath; Needle = 'rusty_v8_crate_version = ""' },
         @{ Path = $compilerGnPath; Needle = '# rusty_v8 i686-musl target C/C++ headers' },
         @{ Path = $tripleGnPath; Needle = '--target=i386-unknown-linux-musl' },
@@ -325,7 +397,9 @@ function Patch-RustyV8I686NativeMusl {
         @{ Path = $compilerGnPath; Needle = 'defines += [ "ANDROID_HOST_MUSL" ]' },
         @{ Path = $compilerGnPath; Needle = 'rusty_v8_zig_lib_dir != "" && is_a_target_toolchain' },
         @{ Path = $linuxToolchainGnPath; Needle = 'clang_v8_toolchain("clang_x86_v8_x86_glibc")' },
-        @{ Path = $linuxToolchainGnPath; Needle = 'rusty_v8_zig_lib_dir = ""' }
+        @{ Path = $linuxToolchainGnPath; Needle = 'rusty_v8_zig_lib_dir = ""' },
+        @{ Path = if ($V8Version -eq "150.4.0") { $linuxToolchainGnPath } else { $buildRsPath }; Needle = if ($V8Version -eq "150.4.0") { 'use_musl = false' } else { 'rusty_v8 native build: target C/C++ uses Zig musl headers' } },
+        @{ Path = if ($V8Version -eq "150.4.0") { $knownRustTargetsPath } else { $buildRsPath }; Needle = if ($V8Version -eq "150.4.0") { 'i686-unknown-linux-musl' } else { 'rusty_v8 native build: target C/C++ uses Zig musl headers' } }
     )) {
         if (-not [System.IO.File]::ReadAllText($check.Path).Contains($check.Needle)) {
             throw "rusty_v8 native i686 musl patch verification failed: $($check.Path) missing $($check.Needle)"
@@ -340,6 +414,9 @@ function Patch-RustyV8I686NativeMusl {
         native_zig_musl_headers_after_libcxx = $true
         native_compiler_builtin_headers = $true
         gn_crate_version_marker = $true
+        upstream_musl_x86_architecture_enabled = $V8Version -eq "150.4.0"
+        rust_target_triple_allowlisted = if ($V8Version -eq "150.4.0") { "i686-unknown-linux-musl" } else { $null }
+        snapshot_use_musl = if ($V8Version -eq "150.4.0") { $false } else { $null }
         cpu_abi_config = if ($V8Version -eq "150.4.0") { "build/config/compiler_cpu_abi.gn" } else { "build/config/compiler/BUILD.gn" }
         libcxx_musl_configuration = "ANDROID_HOST_MUSL"
         snapshot_toolchain = "//build/toolchain/linux:clang_x86_v8_x86_glibc"
