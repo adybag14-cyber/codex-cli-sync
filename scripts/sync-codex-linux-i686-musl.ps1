@@ -257,6 +257,12 @@ function Restore-RustyV8IcuDataBlob {
             bytes = [int64]10822192
             sha256 = '1cf67874b5a87a8363a86fb3f81e3cbbed54d389062dab8fb52308d5cf8c8612'
         }
+        '150.4.0' = [ordered]@{
+            icu_commit = 'ee5f27adc28bd3f15b2c293f726d14d2e336cbd5'
+            git_blob = 'd1a12cb93065157498a11ff5f4b9a6501ee22506'
+            bytes = [int64]10822192
+            sha256 = '1cf67874b5a87a8363a86fb3f81e3cbbed54d389062dab8fb52308d5cf8c8612'
+        }
     }
 
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rusty-v8-icu-{0}-{1}" -f $V8Version, [guid]::NewGuid().ToString('N'))
@@ -356,6 +362,11 @@ function Restore-RustyV8ChromiumRustVendor {
             rust_commit = '2b055f4ecac78bbf34a0d34217c699b7b09b44dd'
             vendor_tree = '2d3dd155f076c848a7311679d0015524e338c937'
             files = 9548
+        }
+        '150.4.0' = [ordered]@{
+            rust_commit = '26e8ff47f18a8d28d6187a04b6a16cb7332356f8'
+            vendor_tree = '9c8187695bd7cf8af33ed975228b68944ffaac39'
+            files = 10606
         }
     }
 
@@ -541,7 +552,8 @@ function Enable-I686MuslRustyV8SourceBuild {
 function Remove-StaleRustyV8GnOutput {
     param(
         [Parameter(Mandatory = $true)][string]$CodexRsDir,
-        [Parameter(Mandatory = $true)][string]$Target
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$V8Version
     )
 
     $gnOutDir = Join-Path $CodexRsDir "target/$Target/release/gn_out"
@@ -554,6 +566,7 @@ function Remove-StaleRustyV8GnOutput {
     $usesForcedSystemClang = $argsText -match 'clang_base_path\s*=\s*"/usr/lib/llvm-[^"]+"'
     $usesTargetMuslHeaders = $argsText -match 'rusty_v8_zig_lib_dir\s*=\s*"[^"]+"'
     $usesIsolatedSnapshotToolchain = $argsText -match 'v8_snapshot_toolchain\s*=\s*"//build/toolchain/linux:clang_x86_v8_x86_glibc"'
+    $usesMatchingRustyV8Version = $argsText -match ('rusty_v8_crate_version\s*=\s*"' + [regex]::Escape($V8Version) + '"')
 
     $toolchainPath = Join-Path $gnOutDir 'toolchain.ninja'
     $usesLibcxxCompatibleMuslHeaderOrder = $false
@@ -574,6 +587,7 @@ function Remove-StaleRustyV8GnOutput {
     if (-not $usesForcedSystemClang -and
         $usesTargetMuslHeaders -and
         $usesIsolatedSnapshotToolchain -and
+        $usesMatchingRustyV8Version -and
         $usesLibcxxCompatibleMuslHeaderOrder -and
         $usesLibcxxMuslConfiguration -and
         $usesBundledCompilerBuiltinHeaders) {
@@ -589,6 +603,9 @@ function Remove-StaleRustyV8GnOutput {
     }
     if (-not $usesIsolatedSnapshotToolchain) {
         $reasons += 'did not isolate the runnable x86 snapshot toolchain on glibc'
+    }
+    if (-not $usesMatchingRustyV8Version) {
+        $reasons += "was generated for a different rusty_v8 version than $V8Version"
     }
     if (-not $usesLibcxxCompatibleMuslHeaderOrder) {
         $reasons += 'placed Zig musl headers before libc++ compatibility wrappers'
@@ -847,7 +864,7 @@ try {
     $rustyV8RustVendor = Restore-RustyV8ChromiumRustVendor -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
     $rustyV8I686Abi = Patch-RustyV8I686Abi -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
     $rustyV8I686NativeMusl = Patch-RustyV8I686NativeMusl -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
-    $removedStaleV8GnOutput = Remove-StaleRustyV8GnOutput -CodexRsDir $codexRsDir -Target $LinuxTarget
+    $removedStaleV8GnOutput = Remove-StaleRustyV8GnOutput -CodexRsDir $codexRsDir -Target $LinuxTarget -V8Version $rustyV8Version
     cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
         throw "cargo zigbuild failed with exit code $LASTEXITCODE"

@@ -7,14 +7,20 @@ function Patch-RustyV8I686NativeMusl {
         [Parameter(Mandatory = $true)][string]$RustyV8SourceDir
     )
 
-    if ($V8Version -ne "149.2.0") {
-        throw "The native i686 musl patch is audited only for rusty_v8 149.2.0; found $V8Version."
+    $supportedVersions = @("149.2.0", "150.4.0")
+    if ($V8Version -notin $supportedVersions) {
+        throw "The native i686 musl patch is audited only for rusty_v8 versions $($supportedVersions -join ', '); found $V8Version."
     }
 
     $buildRsPath = Join-Path $RustyV8SourceDir "build.rs"
     $compilerGnPath = Join-Path $RustyV8SourceDir "build/config/compiler/BUILD.gn"
+    $cpuAbiGnPath = Join-Path $RustyV8SourceDir "build/config/compiler_cpu_abi.gn"
     $linuxToolchainGnPath = Join-Path $RustyV8SourceDir "build/toolchain/linux/BUILD.gn"
-    foreach ($path in @($buildRsPath, $compilerGnPath, $linuxToolchainGnPath)) {
+    $requiredPaths = @($buildRsPath, $compilerGnPath, $linuxToolchainGnPath)
+    if ($V8Version -eq "150.4.0") {
+        $requiredPaths += $cpuAbiGnPath
+    }
+    foreach ($path in $requiredPaths) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "Required rusty_v8 native-build file not found: $path"
         }
@@ -58,6 +64,10 @@ function Patch-RustyV8I686NativeMusl {
             '      );'
             '    }'
             '    gn_args.push(format!("rusty_v8_zig_lib_dir={zig_lib_dir:?}"));'
+            '    gn_args.push(format!('
+            '      "rusty_v8_crate_version={:?}",'
+            '      env!("CARGO_PKG_VERSION")'
+            '    ));'
             '    gn_args.push('
             '      "v8_snapshot_toolchain=\"//build/toolchain/linux:clang_x86_v8_x86_glibc\""'
             '        .to_string(),'
@@ -74,30 +84,73 @@ function Patch-RustyV8I686NativeMusl {
         }
         $buildRs = $buildRs.Replace($nativeMuslAnchor, $nativeMuslPatch)
     }
+    $crateVersionGnMarker = 'rusty_v8_crate_version={:?}'
+    if (-not $buildRs.Contains($crateVersionGnMarker)) {
+        $crateVersionGnAnchor = '    gn_args.push(format!("rusty_v8_zig_lib_dir={zig_lib_dir:?}"));'
+        $crateVersionGnPatch = @(
+            '    gn_args.push(format!("rusty_v8_zig_lib_dir={zig_lib_dir:?}"));'
+            '    gn_args.push(format!('
+            '      "rusty_v8_crate_version={:?}",'
+            '      env!("CARGO_PKG_VERSION")'
+            '    ));'
+        ) -join "`n"
+        if (-not $buildRs.Contains($crateVersionGnAnchor)) {
+            throw "rusty_v8 crate-version GN argument contract changed: $buildRsPath"
+        }
+        $buildRs = $buildRs.Replace($crateVersionGnAnchor, $crateVersionGnPatch)
+    }
     [System.IO.File]::WriteAllText($buildRsPath, $buildRs, [System.Text.UTF8Encoding]::new($false))
 
     $compilerGn = [System.IO.File]::ReadAllText($compilerGnPath).Replace("`r`n", "`n")
+    $gnArgumentPath = if ($V8Version -eq "150.4.0") { $cpuAbiGnPath } else { $compilerGnPath }
+    $gnArgumentText = if ($V8Version -eq "150.4.0") {
+        [System.IO.File]::ReadAllText($cpuAbiGnPath).Replace("`r`n", "`n")
+    } else {
+        $compilerGn
+    }
     $muslArgLine = '  rusty_v8_zig_lib_dir = ""'
-    if (-not $compilerGn.Contains($muslArgLine)) {
-        $muslArgAnchor = @(
-            'declare_args() {'
-            '  # This allows overriding the location of lld.'
-            '  lld_path = default_lld_path'
-            '}'
-        ) -join "`n"
-        $muslArgPatch = @(
-            'declare_args() {'
-            '  # This allows overriding the location of lld.'
-            '  lld_path = default_lld_path'
-            ''
-            '  # Non-empty only for rusty_v8''s audited i686-musl target toolchain.'
-            '  rusty_v8_zig_lib_dir = ""'
-            '}'
-        ) -join "`n"
-        if (-not $compilerGn.Contains($muslArgAnchor)) {
-            throw "rusty_v8 compiler GN argument contract changed: $compilerGnPath"
+    $versionArgLine = '  rusty_v8_crate_version = ""'
+    if (-not $gnArgumentText.Contains($muslArgLine)) {
+        if ($V8Version -eq "150.4.0") {
+            $muslArgAnchor = 'import("//build/toolchain/toolchain.gni")'
+            $muslArgPatch = @(
+                'import("//build/toolchain/toolchain.gni")'
+                ''
+                'declare_args() {'
+                '  # Non-empty only for rusty_v8''s audited i686-musl target toolchain.'
+                '  rusty_v8_zig_lib_dir = ""'
+                '  rusty_v8_crate_version = ""'
+                '}'
+            ) -join "`n"
+        } else {
+            $muslArgAnchor = @(
+                'declare_args() {'
+                '  # This allows overriding the location of lld.'
+                '  lld_path = default_lld_path'
+                '}'
+            ) -join "`n"
+            $muslArgPatch = @(
+                'declare_args() {'
+                '  # This allows overriding the location of lld.'
+                '  lld_path = default_lld_path'
+                ''
+                '  # Non-empty only for rusty_v8''s audited i686-musl target toolchain.'
+                '  rusty_v8_zig_lib_dir = ""'
+                '  rusty_v8_crate_version = ""'
+                '}'
+            ) -join "`n"
         }
-        $compilerGn = $compilerGn.Replace($muslArgAnchor, $muslArgPatch)
+        if (-not $gnArgumentText.Contains($muslArgAnchor)) {
+            throw "rusty_v8 compiler GN argument contract changed: $gnArgumentPath"
+        }
+        $gnArgumentText = $gnArgumentText.Replace($muslArgAnchor, $muslArgPatch)
+    } elseif (-not $gnArgumentText.Contains($versionArgLine)) {
+        $gnArgumentText = $gnArgumentText.Replace($muslArgLine, "$muslArgLine`n$versionArgLine")
+    }
+    if ($V8Version -eq "150.4.0") {
+        $cpuAbiGn = $gnArgumentText
+    } else {
+        $compilerGn = $gnArgumentText
     }
 
     $nativeHeadersMarker = '# rusty_v8 i686-musl target C/C++ headers'
@@ -174,12 +227,21 @@ function Patch-RustyV8I686NativeMusl {
         $compilerGn = $compilerGn.Replace($libcxxMuslAnchor, $libcxxMuslPatch)
     }
 
-    $gnuTripleLine = '        cflags += [ "--target=i386-unknown-linux-gnu" ]'
-    $muslTripleMarker = '          cflags += [ "--target=i386-unknown-linux-musl" ]'
-    if (-not $compilerGn.Contains($muslTripleMarker)) {
-        if (-not $compilerGn.Contains($gnuTripleLine)) {
-            throw "rusty_v8 x86 compiler target contract changed: $compilerGnPath"
-        }
+    $tripleGnPath = if ($V8Version -eq "150.4.0") { $cpuAbiGnPath } else { $compilerGnPath }
+    $tripleGn = if ($V8Version -eq "150.4.0") { $cpuAbiGn } else { $compilerGn }
+    if ($V8Version -eq "150.4.0") {
+        $gnuTripleLine = '      cpu_abi_cflags += [ "--target=i386-unknown-linux-gnu" ]'
+        $muslTripleMarker = '        cpu_abi_cflags += [ "--target=i386-unknown-linux-musl" ]'
+        $triplePatch = @(
+            '      if (rusty_v8_zig_lib_dir != "" && is_a_target_toolchain) {'
+            '        cpu_abi_cflags += [ "--target=i386-unknown-linux-musl" ]'
+            '      } else {'
+            '        cpu_abi_cflags += [ "--target=i386-unknown-linux-gnu" ]'
+            '      }'
+        ) -join "`n"
+    } else {
+        $gnuTripleLine = '        cflags += [ "--target=i386-unknown-linux-gnu" ]'
+        $muslTripleMarker = '          cflags += [ "--target=i386-unknown-linux-musl" ]'
         $triplePatch = @(
             '        if (rusty_v8_zig_lib_dir != "" && is_a_target_toolchain) {'
             '          cflags += [ "--target=i386-unknown-linux-musl" ]'
@@ -187,7 +249,17 @@ function Patch-RustyV8I686NativeMusl {
             '          cflags += [ "--target=i386-unknown-linux-gnu" ]'
             '        }'
         ) -join "`n"
-        $compilerGn = $compilerGn.Replace($gnuTripleLine, $triplePatch)
+    }
+    if (-not $tripleGn.Contains($muslTripleMarker)) {
+        if (-not $tripleGn.Contains($gnuTripleLine)) {
+            throw "rusty_v8 x86 compiler target contract changed: $tripleGnPath"
+        }
+        $tripleGn = $tripleGn.Replace($gnuTripleLine, $triplePatch)
+    }
+    if ($V8Version -eq "150.4.0") {
+        $cpuAbiGn = $tripleGn
+    } else {
+        $compilerGn = $tripleGn
     }
     if ($compilerGn.Contains('      "-nostdinc",')) {
         throw "rusty_v8 native build still disables bundled Clang resource headers: $compilerGnPath"
@@ -197,6 +269,9 @@ function Patch-RustyV8I686NativeMusl {
         throw "rusty_v8 native build still mixes Zig intrinsic headers with Chromium Clang: $compilerGnPath"
     }
     [System.IO.File]::WriteAllText($compilerGnPath, $compilerGn, [System.Text.UTF8Encoding]::new($false))
+    if ($V8Version -eq "150.4.0") {
+        [System.IO.File]::WriteAllText($cpuAbiGnPath, $cpuAbiGn, [System.Text.UTF8Encoding]::new($false))
+    }
 
     $linuxToolchainGn = [System.IO.File]::ReadAllText($linuxToolchainGnPath).Replace("`r`n", "`n")
     $snapshotToolchainMarker = 'clang_v8_toolchain("clang_x86_v8_x86_glibc")'
@@ -240,9 +315,11 @@ function Patch-RustyV8I686NativeMusl {
 
     foreach ($check in @(
         @{ Path = $buildRsPath; Needle = 'rusty_v8_zig_lib_dir={zig_lib_dir:?}' },
+        @{ Path = $buildRsPath; Needle = 'rusty_v8_crate_version={:?}' },
         @{ Path = $buildRsPath; Needle = 'clang_x86_v8_x86_glibc' },
+        @{ Path = $gnArgumentPath; Needle = 'rusty_v8_crate_version = ""' },
         @{ Path = $compilerGnPath; Needle = '# rusty_v8 i686-musl target C/C++ headers' },
-        @{ Path = $compilerGnPath; Needle = '--target=i386-unknown-linux-musl' },
+        @{ Path = $tripleGnPath; Needle = '--target=i386-unknown-linux-musl' },
         @{ Path = $compilerGnPath; Needle = '-nostdlibinc' },
         @{ Path = $compilerGnPath; Needle = '-idirafter${rusty_v8_zig_lib_dir}/libc/include/generic-musl' },
         @{ Path = $compilerGnPath; Needle = 'defines += [ "ANDROID_HOST_MUSL" ]' },
@@ -262,6 +339,8 @@ function Patch-RustyV8I686NativeMusl {
         native_zig_musl_headers = $true
         native_zig_musl_headers_after_libcxx = $true
         native_compiler_builtin_headers = $true
+        gn_crate_version_marker = $true
+        cpu_abi_config = if ($V8Version -eq "150.4.0") { "build/config/compiler_cpu_abi.gn" } else { "build/config/compiler/BUILD.gn" }
         libcxx_musl_configuration = "ANDROID_HOST_MUSL"
         snapshot_toolchain = "//build/toolchain/linux:clang_x86_v8_x86_glibc"
         snapshot_toolchain_libc = "glibc"
