@@ -1,10 +1,10 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "5ad367fb95ed3aec95ac4a0357ae7d074b5ca3e9",
+  "upstream_sha": "355d2a802aaad0d5d003b7bba49f25a05bd1db5a",
   "linux_target": "i686-unknown-linux-musl",
-  "generated_at_utc": "2026-07-30T12:16:37.7189326Z",
-  "release_tag": "linux-i686-musl-5ad367fb95ed",
+  "generated_at_utc": "2026-07-30T16:09:17.9146379Z",
+  "release_tag": "linux-i686-musl-355d2a802aaa",
   "rolling_tag": "latest-linux-i686-musl",
   "custom_runtime_patches": "not_applied",
   "compatibility_patches": [
@@ -98,7 +98,7 @@
     "mcp_server_recursion_limit_256": true,
     "mcp_server_recursion_limit_text_changed": false,
     "rusty_v8_archive_path": "/home/runner/work/codex-cli-sync/codex-cli-sync/out/codex-upstream-linux-i686/codex-rs/target/i686-unknown-linux-musl/release/gn_out/obj/librusty_v8.a",
-    "rusty_v8_archive_member_file_output": "/tmp/rusty-v8-i686-member-5407.o: ELF 32-bit LSB relocatable, Intel 80386, version 1 (SYSV), with debug_info, not stripped",
+    "rusty_v8_archive_member_file_output": "/tmp/rusty-v8-i686-member-5547.o: ELF 32-bit LSB relocatable, Intel 80386, version 1 (SYSV), with debug_info, not stripped",
     "linux_sandbox_syscalls_patched_for_i686_musl": true,
     "openssl_no_c11_atomics_for_i686_musl": true,
     "openssl_broken_clang_atomics_for_i686_musl": true,
@@ -116,16 +116,16 @@
   "verification": {
     "version_output": "codex-cli 0.0.0",
     "file_output": "/home/runner/work/codex-cli-sync/codex-cli-sync/out/codex-upstream-linux-i686/codex-rs/target/i686-unknown-linux-musl/release/codex: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), statically linked, stripped",
-    "rusty_v8_object_file_output": "/tmp/rusty-v8-i686-member-5407.o: ELF 32-bit LSB relocatable, Intel 80386, version 1 (SYSV), with debug_info, not stripped"
+    "rusty_v8_object_file_output": "/tmp/rusty-v8-i686-member-5547.o: ELF 32-bit LSB relocatable, Intel 80386, version 1 (SYSV), with debug_info, not stripped"
   },
   "artifact": {
-    "name": "codex-linux-i686-musl-5ad367fb95ed.tar.gz",
-    "sha256": "16e07ac483a857c92691c711fd8b5664e804b545aa94fe9948191f0995882c0d"
+    "name": "codex-linux-i686-musl-355d2a802aaa.tar.gz",
+    "sha256": "2314386c5fbae7b9cf8782de33b48f722d584faf0faeaa03c199370d9fd018c7"
   },
   "packaged_files": [
     {
       "path": "codex",
-      "sha256": "5c2ff262776250f869eab95ceb84927016a53498e4d7fec81d25137b3f75c211"
+      "sha256": "d7c82bff587aa245d316f3e69808fc3817c4baa3489dd089d6516187fff9f268"
     },
     {
       "path": "certs/ca-certificates.crt",
@@ -142,11 +142,11 @@
   ],
   "release_files": [
     {
-      "name": "codex-linux-i686-musl-5ad367fb95ed.tar.gz",
-      "sha256": "16e07ac483a857c92691c711fd8b5664e804b545aa94fe9948191f0995882c0d"
+      "name": "codex-linux-i686-musl-355d2a802aaa.tar.gz",
+      "sha256": "2314386c5fbae7b9cf8782de33b48f722d584faf0faeaa03c199370d9fd018c7"
     },
     {
-      "name": "codex-linux-i686-musl-5ad367fb95ed.manifest.json",
+      "name": "codex-linux-i686-musl-355d2a802aaa.manifest.json",
       "sha256": null
     }
   ]
