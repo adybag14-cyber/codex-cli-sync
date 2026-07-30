@@ -257,6 +257,12 @@ function Restore-RustyV8IcuDataBlob {
             bytes = [int64]10822192
             sha256 = '1cf67874b5a87a8363a86fb3f81e3cbbed54d389062dab8fb52308d5cf8c8612'
         }
+        '150.4.0' = [ordered]@{
+            icu_commit = 'ee5f27adc28bd3f15b2c293f726d14d2e336cbd5'
+            git_blob = 'd1a12cb93065157498a11ff5f4b9a6501ee22506'
+            bytes = [int64]10822192
+            sha256 = '1cf67874b5a87a8363a86fb3f81e3cbbed54d389062dab8fb52308d5cf8c8612'
+        }
     }
 
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rusty-v8-icu-{0}-{1}" -f $V8Version, [guid]::NewGuid().ToString('N'))
@@ -356,6 +362,11 @@ function Restore-RustyV8ChromiumRustVendor {
             rust_commit = '2b055f4ecac78bbf34a0d34217c699b7b09b44dd'
             vendor_tree = '2d3dd155f076c848a7311679d0015524e338c937'
             files = 9548
+        }
+        '150.4.0' = [ordered]@{
+            rust_commit = '26e8ff47f18a8d28d6187a04b6a16cb7332356f8'
+            vendor_tree = '9c8187695bd7cf8af33ed975228b68944ffaac39'
+            files = 10606
         }
     }
 
@@ -541,7 +552,8 @@ function Enable-I686MuslRustyV8SourceBuild {
 function Remove-StaleRustyV8GnOutput {
     param(
         [Parameter(Mandatory = $true)][string]$CodexRsDir,
-        [Parameter(Mandatory = $true)][string]$Target
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$V8Version
     )
 
     $gnOutDir = Join-Path $CodexRsDir "target/$Target/release/gn_out"
@@ -554,6 +566,11 @@ function Remove-StaleRustyV8GnOutput {
     $usesForcedSystemClang = $argsText -match 'clang_base_path\s*=\s*"/usr/lib/llvm-[^"]+"'
     $usesTargetMuslHeaders = $argsText -match 'rusty_v8_zig_lib_dir\s*=\s*"[^"]+"'
     $usesIsolatedSnapshotToolchain = $argsText -match 'v8_snapshot_toolchain\s*=\s*"//build/toolchain/linux:clang_x86_v8_x86_glibc"'
+    $usesMatchingRustyV8Version = $argsText -match ('rusty_v8_crate_version\s*=\s*"' + [regex]::Escape($V8Version) + '"')
+    $usesMatchingUpstreamMuslRustPath =
+        $V8Version -ne '150.4.0' -or
+        ($argsText -match 'use_musl\s*=\s*true' -and
+         $argsText -match 'rust_prebuilt_stdlib\s*=\s*false')
 
     $toolchainPath = Join-Path $gnOutDir 'toolchain.ninja'
     $usesLibcxxCompatibleMuslHeaderOrder = $false
@@ -571,9 +588,36 @@ function Remove-StaleRustyV8GnOutput {
             -not ($toolchainText -match '-idirafter[^\s]*/lib/include(?=\s|$)')
     }
 
+    $usesMatchingGeneratedRustTarget = $V8Version -ne '150.4.0'
+    if ($V8Version -eq '150.4.0') {
+        $targetRustCorePath = Join-Path $gnOutDir 'obj/build/rust/std/rules/core.ninja'
+        if (Test-Path -LiteralPath $targetRustCorePath -PathType Leaf) {
+            $targetRustCoreText = [System.IO.File]::ReadAllText($targetRustCorePath)
+            $usesMatchingGeneratedRustTarget =
+                $targetRustCoreText.Contains('--target=i686-unknown-linux-musl') -and
+                -not $targetRustCoreText.Contains('--target=i686-unknown-linux-gnu')
+        }
+    }
+
+    $usesGlibcSnapshotCompilerCommands = $false
+    $snapshotCompilerProbePath = Join-Path $gnOutDir 'clang_x86_v8_x86_glibc/obj/v8/v8_init.ninja'
+    if (Test-Path -LiteralPath $snapshotCompilerProbePath -PathType Leaf) {
+        $snapshotCompilerProbeText = [System.IO.File]::ReadAllText($snapshotCompilerProbePath)
+        $usesGlibcSnapshotCompilerCommands =
+            $snapshotCompilerProbeText.Contains('--target=i386-unknown-linux-gnu') -and
+            -not $snapshotCompilerProbeText.Contains('--target=i386-unknown-linux-musl') -and
+            -not $snapshotCompilerProbeText.Contains('-DANDROID_HOST_MUSL') -and
+            -not $snapshotCompilerProbeText.Contains('-nostdlibinc') -and
+            -not ($snapshotCompilerProbeText -match '-idirafter[^\s]*/libc/include')
+    }
+
     if (-not $usesForcedSystemClang -and
         $usesTargetMuslHeaders -and
         $usesIsolatedSnapshotToolchain -and
+        $usesMatchingRustyV8Version -and
+        $usesMatchingUpstreamMuslRustPath -and
+        $usesMatchingGeneratedRustTarget -and
+        $usesGlibcSnapshotCompilerCommands -and
         $usesLibcxxCompatibleMuslHeaderOrder -and
         $usesLibcxxMuslConfiguration -and
         $usesBundledCompilerBuiltinHeaders) {
@@ -589,6 +633,18 @@ function Remove-StaleRustyV8GnOutput {
     }
     if (-not $usesIsolatedSnapshotToolchain) {
         $reasons += 'did not isolate the runnable x86 snapshot toolchain on glibc'
+    }
+    if (-not $usesMatchingRustyV8Version) {
+        $reasons += "was generated for a different rusty_v8 version than $V8Version"
+    }
+    if (-not $usesMatchingUpstreamMuslRustPath) {
+        $reasons += 'did not enable the audited upstream musl Rust target path'
+    }
+    if (-not $usesMatchingGeneratedRustTarget) {
+        $reasons += 'did not generate i686-unknown-linux-musl Rust compiler commands'
+    }
+    if (-not $usesGlibcSnapshotCompilerCommands) {
+        $reasons += 'generated snapshot compiler commands that were not isolated on i386 glibc'
     }
     if (-not $usesLibcxxCompatibleMuslHeaderOrder) {
         $reasons += 'placed Zig musl headers before libc++ compatibility wrappers'
@@ -678,6 +734,10 @@ function Set-I686MuslBuildEnvironment {
     $env:OPENSSL_STATIC = "1"
     $env:AWS_LC_SYS_NO_JITTER_ENTROPY = "1"
     $env:PKG_CONFIG_ALLOW_CROSS = "1"
+    # lzma-sys otherwise accepts the runner host's pkg-config result during a
+    # cross build and links /usr/lib/x86_64-linux-gnu/liblzma.a into i686.
+    $env:LZMA_API_STATIC = "1"
+    $env:LIBLZMA_NO_PKG_CONFIG = "1"
     $env:CARGO_BUILD_JOBS = "2"
 
     # Zig's i686 musl libatomic does not provide __atomic_is_lock_free. OpenSSL
@@ -838,6 +898,12 @@ try {
         throw "cargo clean for openssl-sys failed with exit code $LASTEXITCODE"
     }
 
+    Write-Host "Clearing cached lzma-sys artifacts so bundled i686 liblzma is rebuilt."
+    cargo clean --package lzma-sys --target $LinuxTarget
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo clean for lzma-sys failed with exit code $LASTEXITCODE"
+    }
+
     cargo fetch --locked --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
         throw "cargo fetch failed with exit code $LASTEXITCODE"
@@ -847,11 +913,31 @@ try {
     $rustyV8RustVendor = Restore-RustyV8ChromiumRustVendor -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
     $rustyV8I686Abi = Patch-RustyV8I686Abi -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
     $rustyV8I686NativeMusl = Patch-RustyV8I686NativeMusl -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
-    $removedStaleV8GnOutput = Remove-StaleRustyV8GnOutput -CodexRsDir $codexRsDir -Target $LinuxTarget
+    $removedStaleV8GnOutput = Remove-StaleRustyV8GnOutput -CodexRsDir $codexRsDir -Target $LinuxTarget -V8Version $rustyV8Version
     cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
         throw "cargo zigbuild failed with exit code $LASTEXITCODE"
     }
+
+    $lzmaBuildOutputs = @(
+        Get-ChildItem -LiteralPath (Join-Path $codexRsDir "target/$LinuxTarget/release/build") `
+            -Directory -Filter 'lzma-sys-*' -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName 'output' } |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+    )
+    if ($lzmaBuildOutputs.Count -eq 0) {
+        throw "lzma-sys build output was not produced for $LinuxTarget."
+    }
+    $lzmaBuildOutputText = ($lzmaBuildOutputs | ForEach-Object {
+        [System.IO.File]::ReadAllText($_)
+    }) -join "`n"
+    if ($lzmaBuildOutputText -match '(?m)cargo:rustc-link-search=native=/(usr/)?lib/(x86_64|aarch64|i[3-6]86)-linux-gnu') {
+        throw "lzma-sys selected a host-architecture system library during the $LinuxTarget cross build."
+    }
+    if ($lzmaBuildOutputText -notmatch '(?m)cargo:rustc-link-lib=(static=)?lzma') {
+        throw "lzma-sys did not report its bundled liblzma link contract for $LinuxTarget."
+    }
+    Write-Host "Verified bundled target liblzma for $LinuxTarget."
 } finally {
     Pop-Location
 }
@@ -986,6 +1072,12 @@ $manifest = [ordered]@{
             applied = [bool]$enabledBlake3Pure
             reason = "blake3 compiles AVX512 C intrinsics on 32-bit x86 by default, and zig clang rejects that path for i686 musl."
             effect = "blake3 uses its pure Rust fallback for this target so the i686 musl release can compile."
+        },
+        [ordered]@{
+            name    = "build_bundled_liblzma_for_i686_musl"
+            applied = $env:LZMA_API_STATIC -eq "1" -and $env:LIBLZMA_NO_PKG_CONFIG -eq "1"
+            reason  = "Cross-enabled pkg-config can select the Linux runner's x86_64 liblzma archive while linking the i686 musl executable."
+            effect  = "lzma-sys compiles and links its bundled target liblzma, and the build rejects host-architecture search paths."
         }
     )
     build_adjustments          = [ordered]@{
@@ -1022,6 +1114,10 @@ $manifest = [ordered]@{
         openssl_no_c11_atomics_for_i686_musl = $true
         openssl_broken_clang_atomics_for_i686_musl = $true
         openssl_sys_cleaned_for_i686_musl = $true
+        lzma_sys_bundled_for_i686_musl = $env:LZMA_API_STATIC -eq "1"
+        lzma_sys_host_pkg_config_disabled = $env:LIBLZMA_NO_PKG_CONFIG -eq "1"
+        lzma_sys_cleaned_for_i686_musl = $true
+        lzma_sys_build_outputs = @($lzmaBuildOutputs)
         cargo_build_jobs              = $env:CARGO_BUILD_JOBS
         ca_certificates_bundle_source  = $caCertPath
         cargo_command                  = "cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget"

@@ -7,8 +7,9 @@ function Patch-RustyV8I686Abi {
         [Parameter(Mandatory = $true)][string]$RustyV8SourceDir
     )
 
-    if ($V8Version -ne "149.2.0") {
-        throw "The i686 ABI patch is audited only for rusty_v8 149.2.0; found $V8Version."
+    $supportedVersions = @("149.2.0", "150.4.0")
+    if ($V8Version -notin $supportedVersions) {
+        throw "The i686 ABI patch is audited only for rusty_v8 versions $($supportedVersions -join ', '); found $V8Version."
     }
 
     $bindingPath = Join-Path $RustyV8SourceDir "src/binding.cc"
