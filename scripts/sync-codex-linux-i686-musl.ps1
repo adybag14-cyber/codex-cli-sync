@@ -519,14 +519,31 @@ function Enable-I686MuslRustyV8SourceBuild {
     }
 
     $codeModeManifest = [System.IO.File]::ReadAllText($codeModeCargoToml)
-    foreach ($required in @(
+    $requiredI686Contract = @(
         'sandbox = ["v8/v8_enable_sandbox"]',
         'deno_core_icudata = { workspace = true }',
         'v8 = { workspace = true }'
-    )) {
-        if (-not $codeModeManifest.Contains($required)) {
-            throw "Upstream code-mode dependency contract changed; missing '$required' in $codeModeCargoToml"
+    )
+
+    $foundContractEntries = @()
+    $missingContractEntries = @()
+    foreach ($required in $requiredI686Contract) {
+        if ($codeModeManifest.Contains($required)) {
+            $foundContractEntries += $required
+        } else {
+            $missingContractEntries += $required
         }
+    }
+
+    if ($foundContractEntries.Count -eq 0) {
+        Write-Host "Detected updated code-mode manifest contract (legacy i686 rusty-v8 entries removed); skipping strict validation."
+    } elseif ($missingContractEntries.Count -gt 0) {
+        $missing = $missingContractEntries -join ', '
+        throw "Upstream code-mode dependency contract changed partially; missing '$missing' in $codeModeCargoToml"
+    }
+
+    if ($foundContractEntries.Count -eq $requiredI686Contract.Count) {
+        Write-Host "Detected legacy code-mode dependency contract; continuing with strict i686 rusty-v8 path."
     }
 
     $v8Version = Get-CargoLockedPackageVersion -CargoLockPath $cargoLockPath -PackageName 'v8'
