@@ -418,11 +418,14 @@ $toolHandlersPath = Get-SourceFile -RelativePath "codex-rs\core\src\tools\handle
 $execPolicyPath = Get-SourceFile -RelativePath "codex-rs\core\src\exec_policy.rs"
 $loginServerPath = Get-SourceFile -RelativePath "codex-rs\login\src\server.rs"
 $loginServerE2ePath = Get-SourceFile -RelativePath "codex-rs\login\tests\suite\login_server_e2e.rs"
+$execLibPath = Get-SourceFile -RelativePath "codex-rs\exec\src\lib.rs"
 $tuiLibPath = Get-SourceFile -RelativePath "codex-rs\tui\src\lib.rs"
 $onboardingScreenPath = Get-SourceFile -RelativePath "codex-rs\tui\src\onboarding\onboarding_screen.rs"
 $mcpServerLibPath = Get-SourceFile -RelativePath "codex-rs\mcp-server\src\lib.rs"
 
 $mcpServerRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path $mcpServerLibPath -Minimum 256
+$execRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path $execLibPath -Minimum 256
+$tuiRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path $tuiLibPath -Minimum 256
 
 $permissionsReplacement = @'
                 approval_policy: if cfg!(target_os = "windows") {
@@ -575,6 +578,8 @@ Insert-AfterOnce `
     -Description "skip exec approval and sandbox policy on Windows"
 
 Assert-Contains -Path $mcpServerLibPath -Needle '#![recursion_limit = "256"]' -Description "mcp-server recursion limit"
+Assert-Contains -Path $execLibPath -Needle '#![recursion_limit = "256"]' -Description "codex-exec recursion limit"
+Assert-Contains -Path $tuiLibPath -Needle '#![recursion_limit = "256"]' -Description "codex-tui recursion limit"
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(AskForApproval::Never)' -Description "approval policy override"
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(PermissionProfile::Disabled)' -Description "permission profile override"
 Assert-Contains -Path $tuiLibPath -Needle 'let should_prompt_windows_sandbox_nux_at_startup = {' -Description "sandbox startup NUX disabled"
