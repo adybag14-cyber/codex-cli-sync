@@ -296,7 +296,7 @@ jobs:
           git checkout $env:GITHUB_REF_NAME
           git pull --ff-only origin $env:GITHUB_REF_NAME
 
-      - name: Free Disk Space For rusty_v8 Source Build
+      - name: Free Disk Space For Linux i686 Build
         shell: bash
         run: |
           set -euo pipefail
@@ -351,47 +351,6 @@ jobs:
           version: 0.15.2
           use-cache: false
 
-      - name: Configure Real rusty_v8 Source Build For Linux i686
-        shell: bash
-        run: |
-          set -euo pipefail
-          zig_lib_dir="$(dirname "$(readlink -f "$(command -v zig)")")/lib"
-          for include_dir in \
-            include \
-            libc/include/x86-linux-musl \
-            libc/include/generic-musl \
-            libc/include/x86-linux-any \
-            libc/include/any-linux-any
-          do
-            test -d "$zig_lib_dir/$include_dir"
-          done
-          {
-            echo 'V8_FROM_SOURCE=1'
-            echo 'PYTHON=python3'
-            echo 'LIBCLANG_PATH=/usr/lib/llvm-21/lib'
-            echo 'NINJA=/usr/bin/ninja'
-            echo 'PRINT_GN_ARGS=1'
-            echo 'NUM_JOBS=2'
-            echo 'GN_ARGS=v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
-            echo "RUSTY_V8_ZIG_LIB_DIR=$zig_lib_dir"
-          } >> "$GITHUB_ENV"
-          test -f /usr/lib/llvm-21/lib/libclang.so
-          test -z "${CLANG_BASE_PATH:-}"
-          clang-21 --version
-          echo "rusty_v8 build.rs will inject Zig's i686 musl headers directly into bindgen; native code will use Chromium's matching Clang/Compiler-RT toolchain."
-          echo "Zig library directory: $zig_lib_dir"
-          ninja --version
-          python3 --version
-
-      - name: Verify Linux i686 Bindgen Environment
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$GN_ARGS" = 'v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
-          test -d "$RUSTY_V8_ZIG_LIB_DIR/libc/include/x86-linux-musl"
-          test -d "$RUSTY_V8_ZIG_LIB_DIR/libc/include/generic-musl"
-          echo "direct rusty_v8 Zig-musl bindgen environment is active"
-
       - name: Restore Linux i686 Cargo Cache
         id: linux-i686-cargo-cache-restore
         uses: actions/cache/restore@v4
@@ -402,9 +361,9 @@ jobs:
             ~/.cargo/git
             ~/.cache/ccache
             out/codex-upstream-linux-i686/codex-rs/target
-          key: linux-i686-musl-rusty-v8-abi-v5-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/sync-codex-linux-i686-musl.ps1', 'scripts/Patch-RustyV8I686Abi.ps1', 'scripts/Patch-RustyV8I686NativeMusl.ps1', 'state/latest-linux-i686-musl-sha.txt') }}
+          key: linux-i686-musl-codex-v6-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/sync-codex-linux-i686-musl.ps1', 'scripts/Patch-RustyV8I686Abi.ps1', 'scripts/Patch-RustyV8I686NativeMusl.ps1', 'state/latest-linux-i686-musl-sha.txt') }}
           restore-keys: |
-            linux-i686-musl-rusty-v8-abi-v5-cargo-${{ runner.os }}-
+            linux-i686-musl-codex-v6-cargo-${{ runner.os }}-
 
       - name: Remove Incomplete Cargo Cache Locks
         shell: pwsh
@@ -469,7 +428,7 @@ jobs:
           )
           $body = @"
           Linux i686 musl Codex build compiled from upstream OpenAI Codex without the Windows custom runtime patches.
-          Compatibility: JavaScript code mode is enabled; rusty_v8 is compiled from source for real 32-bit x86 during this GitHub Actions build.
+          rusty_v8 required by resolved codex-cli graph: ${{ steps.linux_i686.outputs.rusty_v8_required }}. The audited i686 rusty_v8 source path is used only when the resolved graph actually needs it.
 
           Upstream repo: ${{ steps.linux_i686.outputs.upstream_repo }}
           Upstream ref: ${{ steps.linux_i686.outputs.upstream_ref }}
@@ -506,7 +465,7 @@ jobs:
           )
           $body = @"
           Rolling Linux i686 musl Codex build.
-          Compatibility: JavaScript code mode is enabled; rusty_v8 is compiled from source for real 32-bit x86 during this GitHub Actions build.
+          rusty_v8 required by resolved codex-cli graph: ${{ steps.linux_i686.outputs.rusty_v8_required }}. The audited i686 rusty_v8 source path is used only when the resolved graph actually needs it.
 
           Upstream repo: ${{ steps.linux_i686.outputs.upstream_repo }}
           Upstream ref: ${{ steps.linux_i686.outputs.upstream_ref }}

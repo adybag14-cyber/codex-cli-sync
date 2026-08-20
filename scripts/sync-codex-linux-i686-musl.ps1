@@ -211,6 +211,70 @@ function Get-CargoLockedPackageVersion {
     return $match.Groups['version'].Value
 }
 
+function Test-CargoTransitiveDependency {
+    param(
+        [Parameter(Mandatory = $true)][string]$CodexRsDir,
+        [Parameter(Mandatory = $true)][string]$RootPackage,
+        [Parameter(Mandatory = $true)][string]$DependencyPackage,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    Push-Location $CodexRsDir
+    try {
+        $metadataLines = @(& cargo metadata --locked --format-version 1 --filter-platform $Target)
+        if ($LASTEXITCODE -ne 0) {
+            throw "cargo metadata failed while checking whether $RootPackage depends on $DependencyPackage for $Target."
+        }
+    } finally {
+        Pop-Location
+    }
+
+    $metadataText = $metadataLines -join "`n"
+    if ([string]::IsNullOrWhiteSpace($metadataText)) {
+        throw "cargo metadata returned no JSON while checking $RootPackage dependencies."
+    }
+    $metadata = $metadataText | ConvertFrom-Json -Depth 100
+    $rootMatches = @($metadata.packages | Where-Object { $_.name -eq $RootPackage })
+    if ($rootMatches.Count -ne 1) {
+        throw "Expected exactly one Cargo package named '$RootPackage', found $($rootMatches.Count)."
+    }
+
+    $packagesById = @{}
+    foreach ($package in @($metadata.packages)) {
+        $packagesById[[string]$package.id] = $package
+    }
+    $nodesById = @{}
+    foreach ($node in @($metadata.resolve.nodes)) {
+        $nodesById[[string]$node.id] = $node
+    }
+
+    $rootId = [string]$rootMatches[0].id
+    $queue = [System.Collections.Generic.Queue[string]]::new()
+    $visited = [System.Collections.Generic.HashSet[string]]::new()
+    $queue.Enqueue($rootId)
+    while ($queue.Count -gt 0) {
+        $id = $queue.Dequeue()
+        if (-not $visited.Add($id)) {
+            continue
+        }
+        if (-not $packagesById.ContainsKey($id)) {
+            throw "Cargo metadata dependency node is missing package metadata: $id"
+        }
+        $package = $packagesById[$id]
+        if ($id -ne $rootId -and $package.name -eq $DependencyPackage) {
+            return $true
+        }
+        if (-not $nodesById.ContainsKey($id)) {
+            continue
+        }
+        foreach ($dep in @($nodesById[$id].deps)) {
+            $queue.Enqueue([string]$dep.pkg)
+        }
+    }
+
+    return $false
+}
+
 function Get-CargoRegistryCrateSource {
     param(
         [Parameter(Mandatory = $true)][string]$PackageName,
@@ -512,28 +576,27 @@ function Restore-RustyV8ChromiumRustVendor {
 function Enable-I686MuslRustyV8SourceBuild {
     param([Parameter(Mandatory = $true)][string]$CodexRsDir)
 
-    $codeModeCargoToml = Join-Path $CodexRsDir 'code-mode/Cargo.toml'
     $cargoLockPath = Join-Path $CodexRsDir 'Cargo.lock'
-    if (-not (Test-Path -LiteralPath $codeModeCargoToml -PathType Leaf)) {
-        throw "Required code-mode manifest not found: $codeModeCargoToml"
-    }
+    $v8Version = Get-CargoLockedPackageVersion -CargoLockPath $cargoLockPath -PackageName 'v8'
 
-    $codeModeManifest = [System.IO.File]::ReadAllText($codeModeCargoToml)
-    foreach ($required in @(
-        'sandbox = ["v8/v8_enable_sandbox"]',
-        'deno_core_icudata = { workspace = true }',
-        'v8 = { workspace = true }'
+    $zig = Get-Command zig -ErrorAction Stop
+    $zigLibDir = Join-Path (Split-Path -Parent $zig.Source) 'lib'
+    foreach ($includeDir in @(
+        'include',
+        'libc/include/x86-linux-musl',
+        'libc/include/generic-musl',
+        'libc/include/x86-linux-any',
+        'libc/include/any-linux-any'
     )) {
-        if (-not $codeModeManifest.Contains($required)) {
-            throw "Upstream code-mode dependency contract changed; missing '$required' in $codeModeCargoToml"
+        if (-not (Test-Path -LiteralPath (Join-Path $zigLibDir $includeDir) -PathType Container)) {
+            throw "Zig i686 musl include directory is missing: $(Join-Path $zigLibDir $includeDir)"
         }
     }
 
-    $v8Version = Get-CargoLockedPackageVersion -CargoLockPath $cargoLockPath -PackageName 'v8'
     $env:V8_FROM_SOURCE = '1'
     $env:PYTHON = if ($env:PYTHON) { $env:PYTHON } else { 'python3' }
     Remove-Item Env:CLANG_BASE_PATH -ErrorAction SilentlyContinue
-    $env:LIBCLANG_PATH = if ($env:LIBCLANG_PATH) { $env:LIBCLANG_PATH } else { '/usr/lib/llvm-19/lib' }
+    $env:LIBCLANG_PATH = if ($env:LIBCLANG_PATH) { $env:LIBCLANG_PATH } else { '/usr/lib/llvm-21/lib' }
     $env:NINJA = if ($env:NINJA) { $env:NINJA } else { '/usr/bin/ninja' }
     $env:PRINT_GN_ARGS = '1'
     $env:NUM_JOBS = if ($env:NUM_JOBS) { $env:NUM_JOBS } else { '2' }
@@ -542,9 +605,11 @@ function Enable-I686MuslRustyV8SourceBuild {
     } else {
         'v8_target_cpu="x86" use_sysroot=false treat_warnings_as_errors=false'
     }
+    $env:RUSTY_V8_ZIG_LIB_DIR = $zigLibDir
 
     Write-Host "Configured rusty_v8 $v8Version to build from source for i686 Linux."
     Write-Host "rusty_v8 GN_ARGS: $env:GN_ARGS"
+    Write-Host "rusty_v8 Zig library directory: $env:RUSTY_V8_ZIG_LIB_DIR"
     Write-Host "rusty_v8 compiler: Chromium bundled Clang/Compiler-RT (CLANG_BASE_PATH intentionally unset)."
     return $v8Version
 }
@@ -826,6 +891,7 @@ Write-ActionOutput -Name "generated_at" -Value $generatedAt
 Write-ActionOutput -Name "bundle_path" -Value ""
 Write-ActionOutput -Name "manifest_path" -Value ""
 Write-ActionOutput -Name "version_output" -Value ""
+Write-ActionOutput -Name "rusty_v8_required" -Value ""
 
 $currentSha = ""
 if (Test-Path -LiteralPath $latestShaPath -PathType Leaf) {
@@ -857,9 +923,36 @@ if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
 
 $codexRsDir = Join-Path $sourceDir "codex-rs"
 $cliCargoTomlPath = Join-Path $codexRsDir "cli/Cargo.toml"
+# Inspect pristine upstream manifests before target-specific compatibility edits.
+# Those edits intentionally diverge Cargo.toml from Cargo.lock and therefore must
+# not be present while cargo metadata is running with --locked.
+$codexCliUsesRustyV8 = Test-CargoTransitiveDependency `
+    -CodexRsDir $codexRsDir `
+    -RootPackage 'codex-cli' `
+    -DependencyPackage 'v8' `
+    -Target $LinuxTarget
+Write-ActionOutput -Name "rusty_v8_required" -Value ([string][bool]$codexCliUsesRustyV8).ToLowerInvariant()
 $addedVendoredOpenSsl = Enable-I686MuslVendoredOpenSsl -CargoTomlPath $cliCargoTomlPath
 $enabledBlake3Pure = Enable-I686MuslBlake3PureFeature -CargoTomlPath $cliCargoTomlPath
-$rustyV8Version = Enable-I686MuslRustyV8SourceBuild -CodexRsDir $codexRsDir
+
+$rustyV8Version = $null
+$rustyV8IcuData = [pscustomobject]@{
+    path = $null; restored = $false; icu_commit = $null; git_blob = $null; bytes = [int64]0; sha256 = $null
+}
+$rustyV8RustVendor = [pscustomobject]@{
+    path = $null; restored = $false; rust_commit = $null; vendor_tree = $null; files = 0; archive_bytes = [int64]0; archive_sha256 = $null; sentinel_blobs = @{}
+}
+$rustyV8I686Abi = $null
+$rustyV8I686NativeMusl = $null
+$removedStaleV8GnOutput = $false
+if ($codexCliUsesRustyV8) {
+    $rustyV8Version = Enable-I686MuslRustyV8SourceBuild -CodexRsDir $codexRsDir
+} else {
+    foreach ($name in @('V8_FROM_SOURCE', 'RUSTY_V8_ZIG_LIB_DIR', 'GN_ARGS', 'PRINT_GN_ARGS', 'NUM_JOBS', 'CLANG_BASE_PATH')) {
+        Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+    }
+    Write-Host "Current codex-cli dependency graph does not include v8; skipping the obsolete rusty_v8 source-build path."
+}
 $mcpServerRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path (Join-Path $codexRsDir "mcp-server/src/lib.rs") -Minimum 256
 $patchedLinuxSandboxSyscalls = Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $codexRsDir
 Set-I686MuslBuildEnvironment
@@ -885,7 +978,11 @@ try {
     }
 
     Write-Host "i686 OpenSSL CFLAGS: $env:CFLAGS_i686_unknown_linux_musl"
-    Write-Host "Building rusty_v8 $rustyV8Version from source for $LinuxTarget (V8_FROM_SOURCE=$env:V8_FROM_SOURCE)."
+    if ($codexCliUsesRustyV8) {
+        Write-Host "Building rusty_v8 $rustyV8Version from source for $LinuxTarget (V8_FROM_SOURCE=$env:V8_FROM_SOURCE)."
+    } else {
+        Write-Host "Building codex-cli for $LinuxTarget without rusty_v8; upstream no longer includes v8 in this package graph."
+    }
 
     & rustc --print target-libdir --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
@@ -908,12 +1005,14 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "cargo fetch failed with exit code $LASTEXITCODE"
     }
-    $rustyV8SourceDir = Get-CargoRegistryCrateSource -PackageName 'v8' -Version $rustyV8Version
-    $rustyV8IcuData = Restore-RustyV8IcuDataBlob -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
-    $rustyV8RustVendor = Restore-RustyV8ChromiumRustVendor -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
-    $rustyV8I686Abi = Patch-RustyV8I686Abi -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
-    $rustyV8I686NativeMusl = Patch-RustyV8I686NativeMusl -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
-    $removedStaleV8GnOutput = Remove-StaleRustyV8GnOutput -CodexRsDir $codexRsDir -Target $LinuxTarget -V8Version $rustyV8Version
+    if ($codexCliUsesRustyV8) {
+        $rustyV8SourceDir = Get-CargoRegistryCrateSource -PackageName 'v8' -Version $rustyV8Version
+        $rustyV8IcuData = Restore-RustyV8IcuDataBlob -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
+        $rustyV8RustVendor = Restore-RustyV8ChromiumRustVendor -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
+        $rustyV8I686Abi = Patch-RustyV8I686Abi -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
+        $rustyV8I686NativeMusl = Patch-RustyV8I686NativeMusl -V8Version $rustyV8Version -RustyV8SourceDir $rustyV8SourceDir
+        $removedStaleV8GnOutput = Remove-StaleRustyV8GnOutput -CodexRsDir $codexRsDir -Target $LinuxTarget -V8Version $rustyV8Version
+    }
     cargo zigbuild --release --package codex-cli --bin codex --target $LinuxTarget
     if ($LASTEXITCODE -ne 0) {
         throw "cargo zigbuild failed with exit code $LASTEXITCODE"
@@ -943,22 +1042,26 @@ try {
 }
 
 $targetDir = Join-Path $sourceDir "codex-rs/target/$LinuxTarget/release"
-$v8ArchivePath = Join-Path $targetDir "gn_out/obj/librusty_v8.a"
-$v8GnArgsPath = Join-Path $targetDir "gn_out/args.gn"
-if (-not (Test-Path -LiteralPath $v8ArchivePath -PathType Leaf)) {
-    throw "rusty_v8 source archive was not produced: $v8ArchivePath"
-}
-if (-not (Test-Path -LiteralPath $v8GnArgsPath -PathType Leaf)) {
-    throw "rusty_v8 GN args were not produced: $v8GnArgsPath"
-}
-$v8GnArgsText = [System.IO.File]::ReadAllText($v8GnArgsPath)
-if ($v8GnArgsText -notmatch 'target_cpu\s*=\s*"x86"' -or $v8GnArgsText -notmatch 'v8_target_cpu\s*=\s*"x86"') {
-    throw "rusty_v8 GN output is not configured for x86: $v8GnArgsPath"
-}
+$v8ArchivePath = ""
+$v8GnArgsPath = ""
+$v8ObjectFileOutput = ""
+if ($codexCliUsesRustyV8) {
+    $v8ArchivePath = Join-Path $targetDir "gn_out/obj/librusty_v8.a"
+    $v8GnArgsPath = Join-Path $targetDir "gn_out/args.gn"
+    if (-not (Test-Path -LiteralPath $v8ArchivePath -PathType Leaf)) {
+        throw "rusty_v8 source archive was not produced: $v8ArchivePath"
+    }
+    if (-not (Test-Path -LiteralPath $v8GnArgsPath -PathType Leaf)) {
+        throw "rusty_v8 GN args were not produced: $v8GnArgsPath"
+    }
+    $v8GnArgsText = [System.IO.File]::ReadAllText($v8GnArgsPath)
+    if ($v8GnArgsText -notmatch 'target_cpu\s*=\s*"x86"' -or $v8GnArgsText -notmatch 'v8_target_cpu\s*=\s*"x86"') {
+        throw "rusty_v8 GN output is not configured for x86: $v8GnArgsPath"
+    }
 
-$env:V8_ARCHIVE_PATH = $v8ArchivePath
-$env:V8_MEMBER_PATH = "/tmp/rusty-v8-i686-member-$PID.o"
-$v8ObjectFileOutput = [string](& bash -lc @'
+    $env:V8_ARCHIVE_PATH = $v8ArchivePath
+    $env:V8_MEMBER_PATH = "/tmp/rusty-v8-i686-member-$PID.o"
+    $v8ObjectFileOutput = [string](& bash -lc @'
 set -euo pipefail
 member="$(ar t "$V8_ARCHIVE_PATH" | head -n 1)"
 test -n "$member"
@@ -966,12 +1069,15 @@ ar p "$V8_ARCHIVE_PATH" "$member" > "$V8_MEMBER_PATH"
 file "$V8_MEMBER_PATH"
 rm -f "$V8_MEMBER_PATH"
 '@)
-if ($LASTEXITCODE -ne 0) {
-    throw "Could not inspect a member of the rusty_v8 archive."
-}
-Write-Host $v8ObjectFileOutput
-if ($v8ObjectFileOutput -notmatch 'ELF 32-bit' -or $v8ObjectFileOutput -notmatch 'Intel 80386') {
-    throw "rusty_v8 archive is not a real 32-bit i386 build: $v8ObjectFileOutput"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not inspect a member of the rusty_v8 archive."
+    }
+    Write-Host $v8ObjectFileOutput
+    if ($v8ObjectFileOutput -notmatch 'ELF 32-bit' -or $v8ObjectFileOutput -notmatch 'Intel 80386') {
+        throw "rusty_v8 archive is not a real 32-bit i386 build: $v8ObjectFileOutput"
+    }
+} else {
+    Write-Host "Verified that the resolved codex-cli graph does not require rusty_v8; no V8 archive is expected."
 }
 
 $codexPath = Join-Path $targetDir "codex"
@@ -1023,8 +1129,10 @@ Files:
 - certs/ca-certificates.crt
 
 Compatibility note:
-  JavaScript code mode is included. rusty_v8 is compiled from source as a real
-  32-bit x86 V8 static archive during the GitHub Actions build.
+  The build resolves the actual codex-cli Cargo dependency graph first. Current
+  upstream no longer pulls rusty_v8 into codex-cli, so the retired V8 source
+  workaround is skipped. If v8 becomes a real codex-cli dependency again, the
+  audited i686 source-build compatibility path is re-enabled automatically.
 
 Tiny Core example:
   install -m 755 codex /home/tc/codex
@@ -1039,6 +1147,20 @@ Invoke-TarGzip -WorkingDirectory $releaseWorkspace -ArchivePath $bundlePath -Ent
 $bundleSha256 = Get-FileSha256 -Path $bundlePath
 $codexSha256 = Get-FileSha256 -Path (Join-Path $payloadRoot "codex")
 $caCertSha256 = Get-FileSha256 -Path (Join-Path $certsDir "ca-certificates.crt")
+$rustyV8BuiltFromSource = $codexCliUsesRustyV8 -and $env:V8_FROM_SOURCE -eq "1"
+$rustyV8GnArgs = if ($codexCliUsesRustyV8) { $env:GN_ARGS } else { $null }
+$rustyV8NumJobs = if ($codexCliUsesRustyV8) { $env:NUM_JOBS } else { $null }
+$rustyV8Reason = if ($codexCliUsesRustyV8) {
+    "rusty_v8 $rustyV8Version has no published i686-unknown-linux-musl archive, so CI builds the real x86 V8 archive from source."
+} else {
+    "Current upstream codex-cli does not depend on v8; the obsolete source-build workaround is intentionally skipped."
+}
+$rustyV8Effect = if ($codexCliUsesRustyV8) {
+    "The resolved codex-cli V8 dependency remains available on i686 musl."
+} else {
+    "Avoids a multi-gigabyte V8 cache/source build for a dependency codex-cli no longer uses."
+}
+
 $manifest = [ordered]@{
     upstream_repo              = $UpstreamRepo
     upstream_ref               = $UpstreamRef
@@ -1048,12 +1170,13 @@ $manifest = [ordered]@{
     release_tag                = $releaseTag
     rolling_tag                = $rollingTag
     custom_runtime_patches     = "not_applied"
+    rusty_v8_required_by_codex_cli = [bool]$codexCliUsesRustyV8
     compatibility_patches      = @(
         [ordered]@{
             name    = "build_rusty_v8_from_source_for_i686_musl"
-            applied = $env:V8_FROM_SOURCE -eq "1"
-            reason  = "rusty_v8 $rustyV8Version has no published i686-unknown-linux-musl archive, so CI builds the real x86 V8 archive from source."
-            effect  = "JavaScript code mode remains enabled in the i686 musl package."
+            applied = [bool]$rustyV8BuiltFromSource
+            reason  = $rustyV8Reason
+            effect  = $rustyV8Effect
         },
         [ordered]@{
             name    = "raise_mcp_server_recursion_limit"
@@ -1083,11 +1206,12 @@ $manifest = [ordered]@{
     build_adjustments          = [ordered]@{
         vendored_openssl_for_i686_musl = [bool]$addedVendoredOpenSsl
         blake3_pure_for_i686_musl = [bool]$enabledBlake3Pure
-        rusty_v8_built_from_source_for_i686_musl = $env:V8_FROM_SOURCE -eq "1"
+        rusty_v8_required_by_codex_cli = [bool]$codexCliUsesRustyV8
+        rusty_v8_built_from_source_for_i686_musl = [bool]$rustyV8BuiltFromSource
         rusty_v8_version = $rustyV8Version
-        rusty_v8_gn_args = $env:GN_ARGS
-        rusty_v8_num_jobs = $env:NUM_JOBS
-        rusty_v8_compiler_toolchain = "Chromium bundled Clang/Compiler-RT"
+        rusty_v8_gn_args = $rustyV8GnArgs
+        rusty_v8_num_jobs = $rustyV8NumJobs
+        rusty_v8_compiler_toolchain = if ($codexCliUsesRustyV8) { "Chromium bundled Clang/Compiler-RT" } else { $null }
         rusty_v8_clang_base_path_forced = $false
         rusty_v8_stale_system_clang_gn_output_removed = [bool]$removedStaleV8GnOutput
         rusty_v8_icu_data_path = $rustyV8IcuData.path

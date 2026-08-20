@@ -281,6 +281,83 @@ function Assert-NotContains {
     }
 }
 
+function Disable-WindowsSandboxOnboardingHint {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $text = Get-Text -Path $Path
+    $marker = '// codex-cli-sync: Windows custom build never shows the sandbox onboarding hint.'
+    if ($text.Contains($marker)) {
+        Write-Host "Kept: Windows sandbox onboarding hint is already disabled"
+        return $true
+    }
+
+    if (-not $text.Contains('show_windows_create_sandbox_hint')) {
+        Write-Host "Skipped optional patch: upstream removed the Windows sandbox onboarding hint"
+        return $false
+    }
+
+    $currentPattern = '(?ms)#\[cfg\(target_os\s*=\s*"windows"\)\]\s*let\s+show_windows_create_sandbox_hint\s*=\s*remote_project_trust\.is_none\(\)\s*&&\s*crate::windows_sandbox::level_from_config\(&config\)\s*==\s*WindowsSandboxLevel::Disabled;'
+    $currentRegex = [regex]::new($currentPattern)
+    $currentMatches = $currentRegex.Matches($text)
+    if ($currentMatches.Count -eq 1) {
+        $replacement = @'
+#[cfg(target_os = "windows")]
+        let show_windows_create_sandbox_hint = {
+            // codex-cli-sync: Windows custom build never shows the sandbox onboarding hint.
+            let _ = remote_project_trust.is_none()
+                && crate::windows_sandbox::level_from_config(&config)
+                    == WindowsSandboxLevel::Disabled;
+            false
+        };
+'@
+        $newText = $currentRegex.Replace(
+            $text,
+            [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $replacement },
+            1
+        )
+        Set-Text -Path $Path -Text $newText
+        Write-Host "Patched: disable current Windows sandbox onboarding hint"
+        return $true
+    }
+    if ($currentMatches.Count -gt 1) {
+        throw "Windows sandbox onboarding patch found multiple current-form anchors in $Path."
+    }
+
+    $legacyPattern = 'let\s+show_windows_create_sandbox_hint\s*=\s*crate::windows_sandbox::level_from_config\(&config\)\s*==\s*WindowsSandboxLevel::Disabled;'
+    $legacyRegex = [regex]::new($legacyPattern)
+    $legacyMatches = $legacyRegex.Matches($text)
+    if ($legacyMatches.Count -eq 1) {
+        $replacement = @'
+let show_windows_create_sandbox_hint = {
+            // codex-cli-sync: Windows custom build never shows the sandbox onboarding hint.
+            let _ =
+                crate::windows_sandbox::level_from_config(&config) == WindowsSandboxLevel::Disabled;
+            false
+        };
+'@
+        $newText = $legacyRegex.Replace(
+            $text,
+            [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $replacement },
+            1
+        )
+        Set-Text -Path $Path -Text $newText
+        Write-Host "Patched: disable legacy Windows sandbox onboarding hint"
+        return $true
+    }
+    if ($legacyMatches.Count -gt 1) {
+        throw "Windows sandbox onboarding patch found multiple legacy anchors in $Path."
+    }
+
+    $falseOnly = [regex]::Matches($text, '(?m)^\s*let\s+show_windows_create_sandbox_hint\s*=\s*false;\s*$')
+    $hasWindowsHintExpression = $text.Contains('crate::windows_sandbox::level_from_config(&config) == WindowsSandboxLevel::Disabled')
+    if ($falseOnly.Count -ge 1 -and -not $hasWindowsHintExpression) {
+        Write-Host "Kept: upstream already hard-disables the Windows sandbox onboarding hint"
+        return $false
+    }
+
+    throw "Upstream Windows sandbox onboarding hint contract changed in $Path; variable still exists but no supported safe form was recognized."
+}
+
 function Set-LoginCallbackPortForWindowsCustom {
     param(
         [Parameter(Mandatory = $true)][string]$ServerPath,
@@ -412,17 +489,7 @@ let should_prompt_windows_sandbox_nux_at_startup = {
 '@ `
     -Description "disable Windows sandbox startup NUX prompt"
 
-Replace-Once `
-    -Path $onboardingScreenPath `
-    -Pattern 'let\s+show_windows_create_sandbox_hint\s*=\s*crate::windows_sandbox::level_from_config\(&config\)\s*==\s*WindowsSandboxLevel::Disabled;' `
-    -Replacement @'
-let show_windows_create_sandbox_hint = {
-            let _ =
-                crate::windows_sandbox::level_from_config(&config) == WindowsSandboxLevel::Disabled;
-            false
-        };
-'@ `
-    -Description "disable Windows sandbox onboarding hint"
+$sandboxOnboardingHintManaged = Disable-WindowsSandboxOnboardingHint -Path $onboardingScreenPath
 
 Insert-AfterOnce `
     -Path $windowsSandboxPath `
@@ -511,7 +578,9 @@ Assert-Contains -Path $mcpServerLibPath -Needle '#![recursion_limit = "256"]' -D
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(AskForApproval::Never)' -Description "approval policy override"
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(PermissionProfile::Disabled)' -Description "permission profile override"
 Assert-Contains -Path $tuiLibPath -Needle 'let should_prompt_windows_sandbox_nux_at_startup = {' -Description "sandbox startup NUX disabled"
-Assert-Contains -Path $onboardingScreenPath -Needle 'let show_windows_create_sandbox_hint = {' -Description "sandbox onboarding hint disabled"
+if ($sandboxOnboardingHintManaged) {
+    Assert-Contains -Path $onboardingScreenPath -Needle '// codex-cli-sync: Windows custom build never shows the sandbox onboarding hint.' -Description "sandbox onboarding hint disabled"
+}
 Assert-Contains -Path $windowsSandboxPath -Needle 'return WindowsSandboxLevel::Disabled;' -Description "sandbox level disabled"
 Assert-Contains -Path $windowsSandboxPath -Needle 'return Ok(());' -Description "sandbox setup no-op"
 Assert-Contains -Path $toolHandlersPath -Needle 'sandbox_permissions: SandboxPermissions::UseDefault' -Description "tool sandbox escalation disabled"
