@@ -80,6 +80,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             out/codex-upstream/codex-rs/target
+            out/rusty-v8
           key: windows-codex-custom-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/*.ps1', 'state/latest-custom-main-sha.txt') }}
           restore-keys: |
             windows-codex-custom-cargo-${{ runner.os }}-
@@ -120,6 +121,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             out/codex-upstream/codex-rs/target
+            out/rusty-v8
           key: ${{ steps.cargo-cache-restore.outputs.cache-primary-key }}
       - name: Upload Build Artifact
         if: steps.sync.outputs.changed == 'true' && steps.sync.outputs.patch_status == 'applied'
@@ -188,6 +190,8 @@ jobs:
           - disables Windows sandbox mode resolution and setup
           - bypasses exec policy/tool escalation prompts on Windows
           - uses the registered OAuth callback ports 1455 and 1457, with Windows PermissionDenied fallback handling
+          - preserves internal content annotations while omitting the server-incompatible content_item_kinds member from OpenAI request payloads
+          - bundles and smoke-tests codex-code-mode-host.exe under codex-resources
           "@
           }
           .\scripts\publish-github-release.ps1 `
@@ -239,6 +243,10 @@ jobs:
           Upstream SHA: ${{ steps.sync.outputs.upstream_sha }}
           Custom version: ${{ steps.sync.outputs.custom_version }}
           Generated at: ${{ steps.sync.outputs.generated_at }}
+
+          Compatibility guarantees:
+          - OpenAI request payloads omit the unsupported content_item_kinds metadata member
+          - codex-code-mode-host.exe is bundled under codex-resources
           "@
           }
           .\scripts\publish-github-release.ps1 `

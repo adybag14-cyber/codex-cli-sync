@@ -9,7 +9,7 @@ The scheduled workflow:
 - clones the upstream source at the exact detected SHA
 - rewrites the workspace version to a custom CI version
 - applies the repo-owned Windows custom patch
-- compiles `codex.exe`, `codex-command-runner.exe`, and `codex-windows-sandbox-setup.exe`
+- compiles `codex.exe`, `codex-command-runner.exe`, `codex-windows-sandbox-setup.exe`, and `codex-code-mode-host.exe`
 - packages those binaries with `rg.exe` and `VERSION.txt`
 - publishes a per-SHA prerelease and refreshes `latest-windows-x64-custom`
 - commits the latest synced upstream SHA and manifest after a successful build
@@ -30,6 +30,8 @@ The Windows custom patch is maintained in [`scripts/patch-codex-windows-custom.p
 For Rust config construction, the patcher prefers named/shorthand struct-field rewriting over one large text anchor so normal upstream refactors can move or reformat surrounding code without losing the required Windows behavior.
 For ChatGPT login, the patcher uses flexible anchors around the login callback constants and bind fallback logic so routine upstream formatting/comment changes do not drop the Windows-safe callback-port fix.
 For Windows sandbox onboarding, the patcher recognizes both the legacy and current upstream forms, preserves newly-added trust conditions as a deliberately-unused expression, and treats an upstream-removed hint as already satisfied instead of failing on a vanished text anchor.
+For OpenAI request compatibility, the patcher preserves `content_item_kinds` annotations in internal history but removes that newer member from provider request payloads until the OpenAI request schema accepts it. The workflow runs the focused upstream request integration test after patching, which also proves that approved `turn_id` and `create_time` metadata remain intact.
+The Windows package includes `codex-code-mode-host.exe` under `codex-resources`, matching upstream standalone install discovery, and smoke-tests its `--help` entry point before publication. The host build derives the locked `v8` crate version, downloads OpenAI Codex's matching `ptrcomp_sandbox_release` archive and generated bindings, verifies both entries against the published SHA-256 file, and caches those artifacts between workflow runs.
 
 Patch contract:
 
@@ -42,6 +44,10 @@ Patch contract:
 - ignore tool-level sandbox escalation metadata on Windows
 - use the registered OAuth callback ports `1455` and `1457`, and treat Windows `PermissionDenied` on the default port as a fallback condition
 - fail the custom patch if upstream's unregistered `16455` default or port-`0` fallback remains in the login server or login e2e constants
+- preserve internal content annotations while omitting unsupported `content_item_kinds` from OpenAI request payloads
+- run focused request regression coverage that preserves `turn_id` and `create_time`
+- build, package, and smoke-test `codex-code-mode-host.exe` under `codex-resources`
+- resolve and checksum-verify the matching Codex-hosted Rusty V8 archive and generated bindings
 
 Release layout:
 

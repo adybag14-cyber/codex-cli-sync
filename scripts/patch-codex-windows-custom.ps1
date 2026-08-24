@@ -418,6 +418,10 @@ $toolHandlersPath = Get-SourceFile -RelativePath "codex-rs\core\src\tools\handle
 $execPolicyPath = Get-SourceFile -RelativePath "codex-rs\core\src\exec_policy.rs"
 $loginServerPath = Get-SourceFile -RelativePath "codex-rs\login\src\server.rs"
 $loginServerE2ePath = Get-SourceFile -RelativePath "codex-rs\login\tests\suite\login_server_e2e.rs"
+$protocolModelsPath = Get-SourceFile -RelativePath "codex-rs\protocol\src\models.rs"
+$clientPath = Get-SourceFile -RelativePath "codex-rs\core\src\client.rs"
+$clientTestPath = Get-SourceFile -RelativePath "codex-rs\core\tests\suite\client.rs"
+$sessionPath = Get-SourceFile -RelativePath "codex-rs\core\src\session\mod.rs"
 $execLibPath = Get-SourceFile -RelativePath "codex-rs\exec\src\lib.rs"
 $tuiLibPath = Get-SourceFile -RelativePath "codex-rs\tui\src\lib.rs"
 $onboardingScreenPath = Get-SourceFile -RelativePath "codex-rs\tui\src\onboarding\onboarding_screen.rs"
@@ -467,6 +471,55 @@ if (-not (Set-ConfigPermissionsForWindowsCustom -Path $configPath)) {
 }
 
 Set-LoginCallbackPortForWindowsCustom -ServerPath $loginServerPath -TestPath $loginServerE2ePath
+
+Insert-AfterOnce `
+    -Path $protocolModelsPath `
+    -Pattern 'pub fn clear_internal_chat_message_metadata_passthrough\(&mut self\) \{\r?\n\s*if let Some\(metadata\) = self\.internal_chat_message_metadata_passthrough_mut\(\) \{\r?\n\s*\*metadata = None;\r?\n\s*\}\r?\n\s*\}' `
+    -Insertion @'
+
+
+    /// Removes content classifications before sending items to an OpenAI endpoint that has not
+    /// rolled out support for this newer internal metadata member. Other approved passthrough
+    /// metadata, including turn IDs and creation times, remains intact.
+    pub fn clear_internal_chat_message_content_item_kinds(&mut self) {
+        if let Some(Some(metadata)) = self.internal_chat_message_metadata_passthrough_mut() {
+            metadata.content_item_kinds = None;
+        }
+    }
+'@ `
+    -Description "add a narrow OpenAI content-item metadata sanitizer"
+
+Replace-Once `
+    -Path $clientPath `
+    -Pattern '(?m)^        if !is_openai \{' `
+    -Replacement @'
+        if is_openai {
+            for item in &mut input {
+                // codex-cli-sync: keep internal annotations in history, but omit the newer
+                // content_item_kinds member until the OpenAI request schema accepts it.
+                item.clear_internal_chat_message_content_item_kinds();
+            }
+        }
+        if !is_openai {
+'@ `
+    -Description "omit unsupported content_item_kinds from OpenAI request payloads"
+
+Insert-AfterOnce `
+    -Path $clientTestPath `
+    -Pattern 'assert_eq!\(item_turn_id\("turn two"\), Some\(second_turn_id\)\);' `
+    -Insertion @'
+
+
+    for item in first_input.iter().chain(second_input.iter()) {
+        assert!(
+            item["internal_chat_message_metadata_passthrough"]
+                .get("content_item_kinds")
+                .is_none(),
+            "OpenAI request item must omit unsupported content_item_kinds metadata: {item}"
+        );
+    }
+'@ `
+    -Description "verify OpenAI requests omit unsupported content-item metadata"
 
 # The original elevated-sandbox NUX kill switch was removed upstream in July 2026.
 # Keep supporting older revisions, but patch the active startup and onboarding
@@ -595,6 +648,11 @@ Assert-Contains -Path $loginServerPath -Needle 'const FALLBACK_PORT: u16 = 1457;
 Assert-Contains -Path $loginServerE2ePath -Needle 'const DEFAULT_LOGIN_PORT: u16 = 1455;' -Description "registered default login callback test port"
 Assert-Contains -Path $loginServerE2ePath -Needle 'const FALLBACK_LOGIN_PORT: u16 = 1457;' -Description "registered fallback login callback test port"
 Assert-Contains -Path $loginServerPath -Needle 'io::ErrorKind::PermissionDenied' -Description "login callback access-denied fallback"
+Assert-Contains -Path $sessionPath -Needle 'content_item_kinds: Some(content_item_kinds)' -Description "internal content annotations preserved"
+Assert-Contains -Path $protocolModelsPath -Needle 'pub fn clear_internal_chat_message_content_item_kinds(&mut self)' -Description "content-item metadata sanitizer"
+Assert-Contains -Path $protocolModelsPath -Needle 'metadata.content_item_kinds = None;' -Description "content-item metadata removal"
+Assert-Contains -Path $clientPath -Needle 'item.clear_internal_chat_message_content_item_kinds();' -Description "OpenAI request metadata sanitization"
+Assert-Contains -Path $clientTestPath -Needle 'OpenAI request item must omit unsupported content_item_kinds metadata' -Description "OpenAI request metadata regression coverage"
 Assert-NotContains -Path $loginServerPath -Needle 'const DEFAULT_PORT: u16 = 16455;' -Description "unregistered login callback default port"
 Assert-NotContains -Path $loginServerPath -Needle 'const FALLBACK_PORT: u16 = 0;' -Description "unregistered port-zero login callback fallback"
 Assert-NotContains -Path $loginServerE2ePath -Needle 'const DEFAULT_LOGIN_PORT: u16 = 16455;' -Description "unregistered login callback test default port"

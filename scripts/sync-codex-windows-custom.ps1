@@ -211,6 +211,93 @@ function Install-RipgrepWindowsX64 {
     }
 }
 
+function Install-RustyV8WindowsArtifacts {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceDir,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    $cargoLockPath = Join-Path $SourceDir "codex-rs\Cargo.lock"
+    if (-not (Test-Path -LiteralPath $cargoLockPath -PathType Leaf)) {
+        throw "Could not find the upstream Cargo.lock needed to resolve rusty_v8: $cargoLockPath"
+    }
+
+    $cargoLock = [System.IO.File]::ReadAllText($cargoLockPath)
+    $v8Match = [regex]::Match(
+        $cargoLock,
+        '(?ms)^\[\[package\]\]\r?\nname = "v8"\r?\nversion = "(?<version>[^"]+)"'
+    )
+    if (-not $v8Match.Success) {
+        throw "Could not resolve the locked v8 crate version from $cargoLockPath"
+    }
+
+    $v8Version = $v8Match.Groups['version'].Value
+    $profile = "ptrcomp_sandbox_release"
+    $releaseTag = "rusty-v8-v$v8Version"
+    $baseUrl = "https://github.com/openai/codex/releases/download/$releaseTag"
+    $artifactDir = Join-Path $WorkspaceDir "rusty-v8\$v8Version\$Target"
+    New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+
+    $archiveName = "rusty_v8_${profile}_${Target}.lib.gz"
+    $bindingName = "src_binding_${profile}_${Target}.rs"
+    $checksumsName = "rusty_v8_${profile}_${Target}.sha256"
+    $archivePath = Join-Path $artifactDir $archiveName
+    $bindingPath = Join-Path $artifactDir $bindingName
+    $checksumsPath = Join-Path $artifactDir $checksumsName
+
+    if (-not (Test-Path -LiteralPath $checksumsPath -PathType Leaf)) {
+        Download-File -Uri "$baseUrl/$checksumsName" -OutFile $checksumsPath
+    }
+
+    $checksumLines = @(Get-Content -LiteralPath $checksumsPath | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($checksumLines.Count -ne 2) {
+        throw "Expected exactly two rusty_v8 checksums in $checksumsPath, found $($checksumLines.Count)."
+    }
+
+    $expectedHashes = @{}
+    foreach ($line in $checksumLines) {
+        $checksumMatch = [regex]::Match($line, '^(?<hash>[0-9a-fA-F]{64})\s+\*?(?<name>[^\\/]+)$')
+        if (-not $checksumMatch.Success) {
+            throw "Invalid rusty_v8 checksum line: $line"
+        }
+        $expectedHashes[$checksumMatch.Groups['name'].Value] = $checksumMatch.Groups['hash'].Value.ToLowerInvariant()
+    }
+
+    foreach ($asset in @(
+        [pscustomobject]@{ Name = $archiveName; Path = $archivePath },
+        [pscustomobject]@{ Name = $bindingName; Path = $bindingPath }
+    )) {
+        if (-not $expectedHashes.ContainsKey($asset.Name)) {
+            throw "The rusty_v8 checksum manifest does not contain $($asset.Name)."
+        }
+
+        $needsDownload = -not (Test-Path -LiteralPath $asset.Path -PathType Leaf)
+        if (-not $needsDownload) {
+            $needsDownload = (Get-FileSha256 -Path $asset.Path) -ne $expectedHashes[$asset.Name]
+        }
+        if ($needsDownload) {
+            Download-File -Uri "$baseUrl/$($asset.Name)" -OutFile $asset.Path
+        }
+
+        $actualHash = Get-FileSha256 -Path $asset.Path
+        if ($actualHash -ne $expectedHashes[$asset.Name]) {
+            throw "rusty_v8 checksum mismatch for $($asset.Name): expected $($expectedHashes[$asset.Name]), got $actualHash"
+        }
+    }
+
+    Write-Host "Verified Codex rusty_v8 $v8Version artifacts for $Target."
+    return [pscustomobject]@{
+        Version       = $v8Version
+        ReleaseTag    = $releaseTag
+        ArchivePath   = $archivePath
+        ArchiveName   = $archiveName
+        ArchiveSha256 = $expectedHashes[$archiveName]
+        BindingPath   = $bindingPath
+        BindingName   = $bindingName
+        BindingSha256 = $expectedHashes[$bindingName]
+    }
+}
+
 function Copy-RequiredBinary {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
@@ -313,8 +400,10 @@ try {
         artifact               = $null
         release_note           = "CUSTOM PATCHES FAILED. No Codex binary was built or uploaded for this upstream SHA."
         patch_contract         = [ordered]@{
-            required_outcome = "Windows custom patches must apply before a binary can be published."
-            login_callback   = "Expected registered OAuth redirect ports 1455 and 1457, with PermissionDenied fallback handling."
+            required_outcome         = "Windows custom patches must apply before a binary can be published."
+            login_callback           = "Expected registered OAuth redirect ports 1455 and 1457, with PermissionDenied fallback handling."
+            openai_request_metadata  = "Expected content_item_kinds to be omitted from OpenAI request payloads while internal annotations remain available."
+            code_mode_host           = "Expected codex-code-mode-host.exe to be built, packaged, and smoke-tested."
         }
         release_files          = @(
             [ordered]@{ name = [System.IO.Path]::GetFileName($manifestPath); sha256 = $null }
@@ -331,11 +420,48 @@ try {
     return
 }
 
+$rustyV8Artifacts = Install-RustyV8WindowsArtifacts -SourceDir $sourceDir -Target $WindowsTarget
+
 Push-Location (Join-Path $sourceDir "codex-rs")
 try {
-    cargo build --release --target $WindowsTarget --bin codex --bin codex-command-runner --bin codex-windows-sandbox-setup
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo build failed with exit code $LASTEXITCODE"
+    $compatibilityTest = "suite::client::openai_stateless_responses_requests_preserve_item_turn_metadata_across_turns"
+    $previousRustMinStack = $env:RUST_MIN_STACK
+    try {
+        # Match upstream Windows CI so the aggregated core test binary does not overflow the
+        # platform's smaller default test-thread stack before reaching the focused assertion.
+        $env:RUST_MIN_STACK = "8388608"
+        cargo test -p codex-core --test all $compatibilityTest -- --exact
+        if ($LASTEXITCODE -ne 0) {
+            throw "OpenAI request metadata compatibility test failed with exit code $LASTEXITCODE"
+        }
+    } finally {
+        if ($null -eq $previousRustMinStack) {
+            Remove-Item Env:RUST_MIN_STACK -ErrorAction SilentlyContinue
+        } else {
+            $env:RUST_MIN_STACK = $previousRustMinStack
+        }
+    }
+
+    $previousRustyV8Archive = $env:RUSTY_V8_ARCHIVE
+    $previousRustyV8Binding = $env:RUSTY_V8_SRC_BINDING_PATH
+    try {
+        $env:RUSTY_V8_ARCHIVE = $rustyV8Artifacts.ArchivePath
+        $env:RUSTY_V8_SRC_BINDING_PATH = $rustyV8Artifacts.BindingPath
+        cargo build --release --target $WindowsTarget --bin codex --bin codex-command-runner --bin codex-windows-sandbox-setup --bin codex-code-mode-host
+        if ($LASTEXITCODE -ne 0) {
+            throw "cargo build failed with exit code $LASTEXITCODE"
+        }
+    } finally {
+        if ($null -eq $previousRustyV8Archive) {
+            Remove-Item Env:RUSTY_V8_ARCHIVE -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_V8_ARCHIVE = $previousRustyV8Archive
+        }
+        if ($null -eq $previousRustyV8Binding) {
+            Remove-Item Env:RUSTY_V8_SRC_BINDING_PATH -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_V8_SRC_BINDING_PATH = $previousRustyV8Binding
+        }
     }
 } finally {
     Pop-Location
@@ -359,6 +485,7 @@ New-Item -ItemType Directory -Force -Path $resourcesDir | Out-Null
 Copy-RequiredBinary -Source (Join-Path $targetDir "codex.exe") -Destination (Join-Path $payloadRoot "codex.exe")
 Copy-RequiredBinary -Source (Join-Path $targetDir "codex-command-runner.exe") -Destination (Join-Path $resourcesDir "codex-command-runner.exe")
 Copy-RequiredBinary -Source (Join-Path $targetDir "codex-windows-sandbox-setup.exe") -Destination (Join-Path $resourcesDir "codex-windows-sandbox-setup.exe")
+Copy-RequiredBinary -Source (Join-Path $targetDir "codex-code-mode-host.exe") -Destination (Join-Path $resourcesDir "codex-code-mode-host.exe")
 Install-RipgrepWindowsX64 -DestinationPath (Join-Path $resourcesDir "rg.exe")
 Set-Content -Path (Join-Path $payloadRoot "VERSION.txt") -Value ($customVersion + "`n") -Encoding utf8
 
@@ -377,6 +504,16 @@ if (-not ([string]$versionOutput).Contains($customVersion)) {
     throw "Packaged codex.exe version '$versionOutput' did not include expected custom version '$customVersion'."
 }
 Write-Host "Packaged $versionOutput"
+
+$codeModeHostHelp = & (Join-Path $resourcesDir "codex-code-mode-host.exe") --help
+if ($LASTEXITCODE -ne 0) {
+    throw "Packaged codex-code-mode-host.exe --help failed with exit code $LASTEXITCODE"
+}
+$codeModeHostHelpText = [string]::Join("`n", [string[]]$codeModeHostHelp)
+if (-not $codeModeHostHelpText.Contains("--listen")) {
+    throw "Packaged codex-code-mode-host.exe help did not include the expected --listen option."
+}
+Write-Host "Packaged codex-code-mode-host.exe smoke test passed."
 
 Compress-Archive -Path $payloadRoot -DestinationPath $bundlePath -CompressionLevel Optimal
 
@@ -405,6 +542,16 @@ $manifest = [ordered]@{
         exec_approval_requirement  = "Skip with bypass_sandbox=true on Windows"
         tool_sandbox_escalation    = "UseDefault and preapproved on Windows"
         login_callback_port        = "Registered OAuth redirect ports 1455 and 1457, with PermissionDenied fallback handling"
+        openai_request_metadata    = "Preserve internal annotations while omitting unsupported content_item_kinds from OpenAI request payloads"
+        code_mode_host             = "Bundled under codex-resources and smoke-tested with --help"
+    }
+    rusty_v8           = [ordered]@{
+        version         = $rustyV8Artifacts.Version
+        release_tag     = $rustyV8Artifacts.ReleaseTag
+        archive_name    = $rustyV8Artifacts.ArchiveName
+        archive_sha256  = $rustyV8Artifacts.ArchiveSha256
+        binding_name    = $rustyV8Artifacts.BindingName
+        binding_sha256  = $rustyV8Artifacts.BindingSha256
     }
     release_files      = @(
         [ordered]@{ name = [System.IO.Path]::GetFileName($bundlePath); sha256 = $bundleSha256 },
