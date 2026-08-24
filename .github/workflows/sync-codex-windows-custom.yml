@@ -282,6 +282,7 @@ jobs:
             exit 0
           }
           git commit -m "Sync custom Codex $env:UPSTREAM_SHA"
+          git pull --rebase origin $env:GITHUB_REF_NAME
           git -c http.extraheader="AUTHORIZATION: bearer $env:GITHUB_TOKEN" push origin HEAD:$env:GITHUB_REF_NAME
 
   linux-i686-musl:
