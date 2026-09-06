@@ -10,6 +10,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+. (Join-Path $PSScriptRoot "Resolve-UpstreamMcpServer.ps1")
+. (Join-Path $PSScriptRoot "Initialize-UpstreamCheckout.ps1")
 . (Join-Path $PSScriptRoot "Patch-RustyV8I686Abi.ps1")
 . (Join-Path $PSScriptRoot "Patch-RustyV8I686NativeMusl.ps1")
 
@@ -913,12 +916,7 @@ if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
     Invoke-Git -WorkingDirectory $sourceDir -Args @("reset", "--hard", "FETCH_HEAD")
     Invoke-Git -WorkingDirectory $sourceDir -Args @("clean", "-ffdx", "-e", "codex-rs/target/")
 } else {
-    if (Test-Path -LiteralPath $sourceDir) {
-        Remove-Item -Recurse -Force -LiteralPath $sourceDir
-    }
-    Invoke-Git -WorkingDirectory $WorkspaceDir -Args @("clone", "--no-tags", "--depth", "1", $remoteUrl, $sourceDir)
-    Invoke-Git -WorkingDirectory $sourceDir -Args @("fetch", "--no-tags", "--depth", "1", "origin", $upstreamSha)
-    Invoke-Git -WorkingDirectory $sourceDir -Args @("checkout", "--detach", "FETCH_HEAD")
+    Initialize-UpstreamCheckout -SourceDir $sourceDir -RemoteUrl $remoteUrl -Commit $upstreamSha
 }
 
 $codexRsDir = Join-Path $sourceDir "codex-rs"
@@ -953,7 +951,13 @@ if ($codexCliUsesRustyV8) {
     }
     Write-Host "Current codex-cli dependency graph does not include v8; skipping the obsolete rusty_v8 source-build path."
 }
-$mcpServerRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path (Join-Path $codexRsDir "mcp-server/src/lib.rs") -Minimum 256
+$mcpServerLibPath = Resolve-UpstreamMcpServerCrateRoot -CodexRsDir $codexRsDir
+$mcpServerRecursionLimitPatched = $false
+if ($mcpServerLibPath) {
+    $mcpServerRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path $mcpServerLibPath -Minimum 256
+}
+$tuiRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path (Join-Path $codexRsDir "tui/src/lib.rs") -Minimum 256
+$execRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path (Join-Path $codexRsDir "exec/src/lib.rs") -Minimum 256
 $patchedLinuxSandboxSyscalls = Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $codexRsDir
 Set-I686MuslBuildEnvironment
 
@@ -1180,9 +1184,21 @@ $manifest = [ordered]@{
         },
         [ordered]@{
             name    = "raise_mcp_server_recursion_limit"
+            applied = [bool]$mcpServerLibPath
+            reason  = if ($mcpServerLibPath) { "Legacy codex-mcp-server type queries exceed Rust's default recursion depth in release builds." } else { "Upstream removed codex-mcp-server from the source, workspace and lockfile." }
+            effect  = if ($mcpServerLibPath) { "codex-mcp-server builds with recursion_limit at least 256." } else { "Not applicable; no absent crate was patched or recreated." }
+        },
+        [ordered]@{
+            name    = "raise_tui_recursion_limit"
             applied = $true
-            reason  = "Current upstream codex-mcp-server type queries exceed Rust's default recursion depth in release builds."
-            effect  = "codex-mcp-server builds deterministically with recursion_limit 256."
+            reason  = "The embedded app-server request future exceeds Rust's default query depth in codex-tui on i686 musl."
+            effect  = "codex-tui builds with recursion_limit at least 256; higher upstream limits are preserved."
+        },
+        [ordered]@{
+            name    = "raise_exec_recursion_limit"
+            applied = $true
+            reason  = "The embedded app-server request future also exceeds Rust's default query depth in codex-exec on i686 musl."
+            effect  = "codex-exec builds with recursion_limit at least 256; higher upstream limits are preserved."
         },
         [ordered]@{
             name   = "i686_musl_linux_sandbox_syscall_compile_fix"
@@ -1230,8 +1246,13 @@ $manifest = [ordered]@{
         rusty_v8_chromium_rust_vendor_sentinel_blobs = $rustyV8RustVendor.sentinel_blobs
         rusty_v8_i686_abi_patch = $rustyV8I686Abi
         rusty_v8_i686_native_musl_patch = $rustyV8I686NativeMusl
-        mcp_server_recursion_limit_256 = $true
+        mcp_server_present = [bool]$mcpServerLibPath
+        mcp_server_recursion_limit_256 = [bool]$mcpServerLibPath
         mcp_server_recursion_limit_text_changed = [bool]$mcpServerRecursionLimitPatched
+        tui_recursion_limit_256 = $true
+        tui_recursion_limit_text_changed = [bool]$tuiRecursionLimitPatched
+        exec_recursion_limit_256 = $true
+        exec_recursion_limit_text_changed = [bool]$execRecursionLimitPatched
         rusty_v8_archive_path = $v8ArchivePath
         rusty_v8_archive_member_file_output = $v8ObjectFileOutput
         linux_sandbox_syscalls_patched_for_i686_musl = [bool]$patchedLinuxSandboxSyscalls

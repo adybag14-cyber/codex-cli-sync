@@ -11,6 +11,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "Initialize-UpstreamCheckout.ps1")
+
 $StateDir = [System.IO.Path]::GetFullPath($StateDir)
 $WorkspaceDir = [System.IO.Path]::GetFullPath($WorkspaceDir)
 $scriptRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
@@ -365,12 +367,7 @@ if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
     Invoke-Git -WorkingDirectory $sourceDir -Args @("reset", "--hard", "FETCH_HEAD")
     Invoke-Git -WorkingDirectory $sourceDir -Args @("clean", "-ffdx", "-e", "codex-rs/target/")
 } else {
-    if (Test-Path -LiteralPath $sourceDir) {
-        Remove-Item -Recurse -Force -LiteralPath $sourceDir
-    }
-    Invoke-Git -WorkingDirectory $WorkspaceDir -Args @("clone", "--no-tags", "--depth", "1", $remoteUrl, $sourceDir)
-    Invoke-Git -WorkingDirectory $sourceDir -Args @("fetch", "--no-tags", "--depth", "1", "origin", $upstreamSha)
-    Invoke-Git -WorkingDirectory $sourceDir -Args @("checkout", "--detach", "FETCH_HEAD")
+    Initialize-UpstreamCheckout -SourceDir $sourceDir -RemoteUrl $remoteUrl -Commit $upstreamSha
 }
 
 Set-CargoWorkspaceVersion -CargoTomlPath (Join-Path $sourceDir "codex-rs\Cargo.toml") -Version $customVersion

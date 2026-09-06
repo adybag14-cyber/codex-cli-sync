@@ -7,6 +7,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "Resolve-UpstreamMcpServer.ps1")
+
 $SourceRoot = [System.IO.Path]::GetFullPath($SourceRoot)
 
 function Get-SourceFile {
@@ -135,6 +137,55 @@ function Insert-AfterOnce {
     )
     Set-Text -Path $Path -Text $newText
     Write-Host "Inserted: $Description"
+}
+
+function Set-WindowsToolPermissionsBypass {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    Insert-AfterOnce -Path $Path `
+        -Pattern 'pub\(super\) async fn apply_granted_turn_permissions\(\s*session: &Session,\s*(?:(?:environment_id: &str|environment: &TurnEnvironment),\s*)?cwd: &(?:std::path::)?Path(?:Uri)?,\s*sandbox_permissions: SandboxPermissions,\s*additional_permissions: Option<AdditionalPermissionProfile>,\s*\) -> EffectiveAdditionalPermissions \{\r?\n' `
+        -Insertion @'
+    if cfg!(target_os = "windows") {
+        let _ = (
+            session,
+            &sandbox_permissions,
+            additional_permissions.as_ref(),
+        );
+        return EffectiveAdditionalPermissions {
+            sandbox_permissions: SandboxPermissions::UseDefault,
+            additional_permissions: None,
+            permissions_preapproved: true,
+        };
+    }
+
+'@ -Description "ignore tool sandbox escalation metadata on Windows"
+}
+
+function Set-WindowsExecPolicyBypass {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $text = Get-Text -Path $Path
+    if ($text.Contains('async fn create_exec_approval_requirement_for_parsed_commands(')) {
+        # The old command method is now a #[cfg(test)] wrapper. Both production
+        # shell entry paths converge on the parsed-command evaluator instead.
+        $pattern = 'async fn create_exec_approval_requirement_for_parsed_commands\(\s*&self,\s*req: ExecApprovalRequest<''_>,\s*ExecPolicyCommands\s*\{\s*commands,\s*command_origin,\s*\}: ExecPolicyCommands,\s*command_platform: DangerousCommandPlatform,\s*\) -> ExecApprovalRequirement \{\r?\n'
+    } else {
+        if ($text -match '#\[cfg\(test\)\]\s*pub\(crate\) async fn create_exec_approval_requirement_for_command\(') {
+            throw "Refusing to patch a test-only exec-policy wrapper without a supported production evaluator."
+        }
+        $pattern = 'pub\(crate\) async fn create_exec_approval_requirement_for_command\(\s*&self,\s*req: ExecApprovalRequest<''_>,\s*\) -> ExecApprovalRequirement \{\r?\n'
+    }
+    Insert-AfterOnce -Path $Path -Pattern $pattern -Insertion @'
+        // codex-cli-sync: preserve the Windows bypass in the production evaluator.
+        if cfg!(target_os = "windows") {
+            let _ = &req;
+            return ExecApprovalRequirement::Skip {
+                bypass_sandbox: true,
+                proposed_execpolicy_amendment: None,
+            };
+        }
+
+'@ -Description "skip exec approval and sandbox policy on Windows"
 }
 
 function Find-MatchingBrace {
@@ -425,9 +476,11 @@ $sessionPath = Get-SourceFile -RelativePath "codex-rs\core\src\session\mod.rs"
 $execLibPath = Get-SourceFile -RelativePath "codex-rs\exec\src\lib.rs"
 $tuiLibPath = Get-SourceFile -RelativePath "codex-rs\tui\src\lib.rs"
 $onboardingScreenPath = Get-SourceFile -RelativePath "codex-rs\tui\src\onboarding\onboarding_screen.rs"
-$mcpServerLibPath = Get-SourceFile -RelativePath "codex-rs\mcp-server\src\lib.rs"
+$mcpServerLibPath = Resolve-UpstreamMcpServerCrateRoot -CodexRsDir (Join-Path $SourceRoot "codex-rs")
 
-$mcpServerRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path $mcpServerLibPath -Minimum 256
+if ($mcpServerLibPath) {
+    $mcpServerRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path $mcpServerLibPath -Minimum 256
+}
 $execRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path $execLibPath -Minimum 256
 $tuiRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path $tuiLibPath -Minimum 256
 
@@ -595,42 +648,12 @@ Insert-AfterOnce `
 '@ `
     -Description "turn Windows sandbox setup into a no-op"
 
-Insert-AfterOnce `
-    -Path $toolHandlersPath `
-    -Pattern 'pub\(super\) async fn apply_granted_turn_permissions\(\s*session: &Session,\s*(?:environment_id: &str,\s*)?cwd: &(?:std::path::)?Path,\s*sandbox_permissions: SandboxPermissions,\s*additional_permissions: Option<AdditionalPermissionProfile>,\s*\) -> EffectiveAdditionalPermissions \{\r?\n' `
-    -Insertion @'
-    if cfg!(target_os = "windows") {
-        let _ = (
-            session,
-            &sandbox_permissions,
-            additional_permissions.as_ref(),
-        );
-        return EffectiveAdditionalPermissions {
-            sandbox_permissions: SandboxPermissions::UseDefault,
-            additional_permissions: None,
-            permissions_preapproved: true,
-        };
-    }
+Set-WindowsToolPermissionsBypass -Path $toolHandlersPath
+Set-WindowsExecPolicyBypass -Path $execPolicyPath
 
-'@ `
-    -Description "ignore tool sandbox escalation metadata on Windows"
-
-Insert-AfterOnce `
-    -Path $execPolicyPath `
-    -Pattern 'pub\(crate\) async fn create_exec_approval_requirement_for_command\(\s*&self,\s*req: ExecApprovalRequest<''_>,\s*\) -> ExecApprovalRequirement \{\r?\n' `
-    -Insertion @'
-        if cfg!(target_os = "windows") {
-            let _ = &req;
-            return ExecApprovalRequirement::Skip {
-                bypass_sandbox: true,
-                proposed_execpolicy_amendment: None,
-            };
-        }
-
-'@ `
-    -Description "skip exec approval and sandbox policy on Windows"
-
-Assert-Contains -Path $mcpServerLibPath -Needle '#![recursion_limit = "256"]' -Description "mcp-server recursion limit"
+if ($mcpServerLibPath) {
+    Assert-Contains -Path $mcpServerLibPath -Needle '#![recursion_limit = "256"]' -Description "mcp-server recursion limit"
+}
 Assert-Contains -Path $execLibPath -Needle '#![recursion_limit = "256"]' -Description "codex-exec recursion limit"
 Assert-Contains -Path $tuiLibPath -Needle '#![recursion_limit = "256"]' -Description "codex-tui recursion limit"
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(AskForApproval::Never)' -Description "approval policy override"
