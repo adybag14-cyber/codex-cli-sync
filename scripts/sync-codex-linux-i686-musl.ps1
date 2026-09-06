@@ -960,6 +960,7 @@ $mcpServerRecursionLimitPatched = $false
 if ($mcpServerLibPath) {
     $mcpServerRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path $mcpServerLibPath -Minimum 256
 }
+$tuiRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path (Join-Path $codexRsDir "tui/src/lib.rs") -Minimum 256
 $patchedLinuxSandboxSyscalls = Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $codexRsDir
 Set-I686MuslBuildEnvironment
 
@@ -1191,6 +1192,12 @@ $manifest = [ordered]@{
             effect  = if ($mcpServerLibPath) { "codex-mcp-server builds with recursion_limit at least 256." } else { "Not applicable; no absent crate was patched or recreated." }
         },
         [ordered]@{
+            name    = "raise_tui_recursion_limit"
+            applied = $true
+            reason  = "The embedded app-server request future exceeds Rust's default query depth in codex-tui on i686 musl."
+            effect  = "codex-tui builds with recursion_limit at least 256; higher upstream limits are preserved."
+        },
+        [ordered]@{
             name   = "i686_musl_linux_sandbox_syscall_compile_fix"
             applied = [bool]$patchedLinuxSandboxSyscalls
             reason = "libc syscall constants are i32 on i686 musl and libc does not expose SYS_accept for this target."
@@ -1239,6 +1246,8 @@ $manifest = [ordered]@{
         mcp_server_present = [bool]$mcpServerLibPath
         mcp_server_recursion_limit_256 = [bool]$mcpServerLibPath
         mcp_server_recursion_limit_text_changed = [bool]$mcpServerRecursionLimitPatched
+        tui_recursion_limit_256 = $true
+        tui_recursion_limit_text_changed = [bool]$tuiRecursionLimitPatched
         rusty_v8_archive_path = $v8ArchivePath
         rusty_v8_archive_member_file_output = $v8ObjectFileOutput
         linux_sandbox_syscalls_patched_for_i686_musl = [bool]$patchedLinuxSandboxSyscalls

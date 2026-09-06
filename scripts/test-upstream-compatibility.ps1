@@ -16,6 +16,12 @@ foreach ($functionName in @('Get-Text', 'Set-Text', 'Insert-AfterOnce', 'Set-Win
     if (-not $definition) { throw "Missing patch function $functionName" }
     . ([ScriptBlock]::Create($definition.Extent.Text))
 }
+$linuxAst = [Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $PSScriptRoot "sync-codex-linux-i686-musl.ps1"), [ref]$patchTokens, [ref]$patchErrors)
+if ($patchErrors.Count) { throw "Linux sync script has syntax errors: $patchErrors" }
+$definition = $linuxAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Ensure-RustCrateRecursionLimit' }, $false)
+if (-not $definition) { throw "Missing Linux recursion-limit function" }
+. ([ScriptBlock]::Create($definition.Extent.Text))
 
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("codex-upstream-contract-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
@@ -165,6 +171,24 @@ $signature
     catch { $rejected = $_.Exception.Message.Contains('test-only exec-policy wrapper') }
     if (-not $rejected) { throw "Test-only wrapper was accepted without a production evaluator" }
     $testCount++
+    foreach ($case in @(
+        @{ Start = ''; Expected = 256; Changed = $true },
+        @{ Start = "#![recursion_limit = `"128`"]`r`n"; Expected = 256; Changed = $true },
+        @{ Start = "#![recursion_limit = `"256`"]`n"; Expected = 256; Changed = $false },
+        @{ Start = "#![recursion_limit = `"512`"]`n"; Expected = 512; Changed = $false }
+    )) {
+        $root = New-Layout -Name ("recursion-" + $testCount) -Files @{ 'lib.rs' = ($case.Start + "pub fn preserved() {}`n") }
+        $path = Join-Path $root 'lib.rs'
+        $changed = Ensure-RustCrateRecursionLimit -Path $path -Minimum 256
+        $patched = [IO.File]::ReadAllText($path)
+        if ($changed -ne $case.Changed -or -not $patched.StartsWith("#![recursion_limit = `"$($case.Expected)`"]") -or -not $patched.Contains('pub fn preserved() {}')) {
+            throw "Recursion limit was not raised/preserved correctly"
+        }
+        if ((Ensure-RustCrateRecursionLimit -Path $path -Minimum 256) -or [IO.File]::ReadAllText($path) -ne $patched) {
+            throw "Recursion-limit patch is not idempotent"
+        }
+        $testCount++
+    }
     Write-Host "Passed $testCount upstream compatibility contract tests."
 } finally {
     $resolvedFixtureRoot = [IO.Path]::GetFullPath($fixtureRoot)
