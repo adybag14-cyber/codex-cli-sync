@@ -12,6 +12,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "Resolve-UpstreamMcpServer.ps1")
+. (Join-Path $PSScriptRoot "Initialize-UpstreamCheckout.ps1")
 . (Join-Path $PSScriptRoot "Patch-RustyV8I686Abi.ps1")
 . (Join-Path $PSScriptRoot "Patch-RustyV8I686NativeMusl.ps1")
 
@@ -915,12 +916,7 @@ if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
     Invoke-Git -WorkingDirectory $sourceDir -Args @("reset", "--hard", "FETCH_HEAD")
     Invoke-Git -WorkingDirectory $sourceDir -Args @("clean", "-ffdx", "-e", "codex-rs/target/")
 } else {
-    if (Test-Path -LiteralPath $sourceDir) {
-        Remove-Item -Recurse -Force -LiteralPath $sourceDir
-    }
-    Invoke-Git -WorkingDirectory $WorkspaceDir -Args @("clone", "--no-tags", "--depth", "1", $remoteUrl, $sourceDir)
-    Invoke-Git -WorkingDirectory $sourceDir -Args @("fetch", "--no-tags", "--depth", "1", "origin", $upstreamSha)
-    Invoke-Git -WorkingDirectory $sourceDir -Args @("checkout", "--detach", "FETCH_HEAD")
+    Initialize-UpstreamCheckout -SourceDir $sourceDir -RemoteUrl $remoteUrl -Commit $upstreamSha
 }
 
 $codexRsDir = Join-Path $sourceDir "codex-rs"
@@ -961,6 +957,7 @@ if ($mcpServerLibPath) {
     $mcpServerRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path $mcpServerLibPath -Minimum 256
 }
 $tuiRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path (Join-Path $codexRsDir "tui/src/lib.rs") -Minimum 256
+$execRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path (Join-Path $codexRsDir "exec/src/lib.rs") -Minimum 256
 $patchedLinuxSandboxSyscalls = Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $codexRsDir
 Set-I686MuslBuildEnvironment
 
@@ -1198,6 +1195,12 @@ $manifest = [ordered]@{
             effect  = "codex-tui builds with recursion_limit at least 256; higher upstream limits are preserved."
         },
         [ordered]@{
+            name    = "raise_exec_recursion_limit"
+            applied = $true
+            reason  = "The embedded app-server request future also exceeds Rust's default query depth in codex-exec on i686 musl."
+            effect  = "codex-exec builds with recursion_limit at least 256; higher upstream limits are preserved."
+        },
+        [ordered]@{
             name   = "i686_musl_linux_sandbox_syscall_compile_fix"
             applied = [bool]$patchedLinuxSandboxSyscalls
             reason = "libc syscall constants are i32 on i686 musl and libc does not expose SYS_accept for this target."
@@ -1248,6 +1251,8 @@ $manifest = [ordered]@{
         mcp_server_recursion_limit_text_changed = [bool]$mcpServerRecursionLimitPatched
         tui_recursion_limit_256 = $true
         tui_recursion_limit_text_changed = [bool]$tuiRecursionLimitPatched
+        exec_recursion_limit_256 = $true
+        exec_recursion_limit_text_changed = [bool]$execRecursionLimitPatched
         rusty_v8_archive_path = $v8ArchivePath
         rusty_v8_archive_member_file_output = $v8ObjectFileOutput
         linux_sandbox_syscalls_patched_for_i686_musl = [bool]$patchedLinuxSandboxSyscalls

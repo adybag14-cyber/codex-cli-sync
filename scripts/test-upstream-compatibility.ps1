@@ -4,6 +4,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Resolve-UpstreamMcpServer.ps1")
+. (Join-Path $PSScriptRoot "Initialize-UpstreamCheckout.ps1")
 
 # Import only the pure patch functions, not the patcher's main source mutation.
 $patchTokens = $null
@@ -186,6 +187,41 @@ $signature
         }
         if ((Ensure-RustCrateRecursionLimit -Path $path -Minimum 256) -or [IO.File]::ReadAllText($path) -ne $patched) {
             throw "Recursion-limit patch is not idempotent"
+        }
+        $testCount++
+    }
+    $remote = New-Layout -Name 'checkout-remote' -Files @{
+        'codex-rs/Cargo.toml' = "[workspace]`nmembers = []`n"
+        '.gitignore' = "codex-rs/target/`n"
+    }
+    & git -C $remote init --quiet
+    if ($LASTEXITCODE -ne 0) { throw 'Fixture git init failed' }
+    & git -C $remote add .
+    if ($LASTEXITCODE -ne 0) { throw 'Fixture git add failed' }
+    & git -C $remote -c commit.gpgsign=false -c user.name='CI fixture' -c user.email='fixture@example.invalid' commit --quiet -m fixture
+    if ($LASTEXITCODE -ne 0) { throw 'Fixture git commit failed' }
+    $revision = (& git -C $remote rev-parse HEAD).Trim()
+    foreach ($withCache in @($false, $true)) {
+        $root = Join-Path $fixtureRoot ("checkout-" + $testCount)
+        if ($withCache) {
+            $root = New-Layout -Name ("checkout-" + $testCount) -Files @{ 'codex-rs/target/cache-sentinel' = 'preserved compiled artifact' }
+        }
+        Initialize-UpstreamCheckout -SourceDir $root -RemoteUrl $remote -Commit $revision
+        if ((& git -C $root rev-parse HEAD).Trim() -ne $revision -or -not (Test-Path -LiteralPath (Join-Path $root 'codex-rs/Cargo.toml'))) {
+            throw 'Upstream checkout did not materialize the exact source commit'
+        }
+        if ($withCache -and [IO.File]::ReadAllText((Join-Path $root 'codex-rs/target/cache-sentinel')) -ne 'preserved compiled artifact') {
+            throw 'Restored target cache was lost'
+        }
+        $testCount++
+    }
+    foreach ($unexpected in @('user-file.txt', 'codex-rs/Cargo.toml')) {
+        $root = New-Layout -Name ("checkout-refusal-" + $testCount) -Files @{ $unexpected = 'must remain unchanged' }
+        $rejected = $false
+        try { Initialize-UpstreamCheckout -SourceDir $root -RemoteUrl $remote -Commit $revision }
+        catch { $rejected = $_.Exception.Message.Contains('unexpected source content') }
+        if (-not $rejected -or [IO.File]::ReadAllText((Join-Path $root $unexpected)) -ne 'must remain unchanged' -or (Test-Path -LiteralPath (Join-Path $root '.git'))) {
+            throw 'Unexpected non-cache source content was not preserved/rejected'
         }
         $testCount++
     }

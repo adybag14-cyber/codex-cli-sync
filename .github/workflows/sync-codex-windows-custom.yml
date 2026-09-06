@@ -34,6 +34,7 @@ on:
       - .github/workflows/sync-codex-windows-custom.yml
       - scripts/patch-codex-windows-custom.ps1
       - scripts/Resolve-UpstreamMcpServer.ps1
+      - scripts/Initialize-UpstreamCheckout.ps1
       - scripts/test-upstream-compatibility.ps1
       - scripts/publish-github-release.ps1
       - scripts/sync-codex-linux-i686-musl.ps1
