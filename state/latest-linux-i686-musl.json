@@ -1,10 +1,10 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "9f70e348e0227980de97e361cce830236fb18317",
+  "upstream_sha": "f5331dc237fd496f23afb6c56702d3df40a53bdb",
   "linux_target": "i686-unknown-linux-musl",
-  "generated_at_utc": "2026-09-07T16:11:04.2641233Z",
-  "release_tag": "linux-i686-musl-9f70e348e022",
+  "generated_at_utc": "2026-09-07T21:44:24.9654634Z",
+  "release_tag": "linux-i686-musl-f5331dc237fd",
   "rolling_tag": "latest-linux-i686-musl",
   "custom_runtime_patches": "not_applied",
   "rusty_v8_required_by_codex_cli": false,
@@ -83,9 +83,9 @@
     "mcp_server_recursion_limit_256": false,
     "mcp_server_recursion_limit_text_changed": false,
     "tui_recursion_limit_256": true,
-    "tui_recursion_limit_text_changed": true,
+    "tui_recursion_limit_text_changed": false,
     "exec_recursion_limit_256": true,
-    "exec_recursion_limit_text_changed": true,
+    "exec_recursion_limit_text_changed": false,
     "rusty_v8_archive_path": "",
     "rusty_v8_archive_member_file_output": "",
     "linux_sandbox_syscalls_patched_for_i686_musl": true,
@@ -108,13 +108,13 @@
     "rusty_v8_object_file_output": ""
   },
   "artifact": {
-    "name": "codex-linux-i686-musl-9f70e348e022.tar.gz",
-    "sha256": "80f8fc5f88b37f52a3747bc0683ba4d086c1d7e68116902f5953beb582160bd7"
+    "name": "codex-linux-i686-musl-f5331dc237fd.tar.gz",
+    "sha256": "6779a2f3d32d9dca480eb368089573a60af3b4fd444eb5e8dfbb67ac5a65756c"
   },
   "packaged_files": [
     {
       "path": "codex",
-      "sha256": "5e34dd159b250ea5739ab6a044a3c76d828e1dcaf9294a9e5d5a5f8f339220c4"
+      "sha256": "a7ede7846a8e13e5a4e4fd44a84fbef860396d4d0347ee1e27b96848e0d2b0f5"
     },
     {
       "path": "certs/ca-certificates.crt",
@@ -131,11 +131,11 @@
   ],
   "release_files": [
     {
-      "name": "codex-linux-i686-musl-9f70e348e022.tar.gz",
-      "sha256": "80f8fc5f88b37f52a3747bc0683ba4d086c1d7e68116902f5953beb582160bd7"
+      "name": "codex-linux-i686-musl-f5331dc237fd.tar.gz",
+      "sha256": "6779a2f3d32d9dca480eb368089573a60af3b4fd444eb5e8dfbb67ac5a65756c"
     },
     {
-      "name": "codex-linux-i686-musl-9f70e348e022.manifest.json",
+      "name": "codex-linux-i686-musl-f5331dc237fd.manifest.json",
       "sha256": null
     }
   ]
