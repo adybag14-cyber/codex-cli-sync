@@ -1,10 +1,10 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "ddf04ad26789d040f9ef6a96736f76602e35a6cc",
+  "upstream_sha": "52e12e0cb506e7bb2c9e406fc84d922e274a0e40",
   "linux_target": "i686-unknown-linux-musl",
-  "generated_at_utc": "2026-09-05T11:56:17.9832648Z",
-  "release_tag": "linux-i686-musl-ddf04ad26789",
+  "generated_at_utc": "2026-09-06T23:41:31.9671725Z",
+  "release_tag": "linux-i686-musl-52e12e0cb506",
   "rolling_tag": "latest-linux-i686-musl",
   "custom_runtime_patches": "not_applied",
   "rusty_v8_required_by_codex_cli": false,
@@ -17,9 +17,21 @@
     },
     {
       "name": "raise_mcp_server_recursion_limit",
+      "applied": false,
+      "reason": "Upstream removed codex-mcp-server from the source, workspace and lockfile.",
+      "effect": "Not applicable; no absent crate was patched or recreated."
+    },
+    {
+      "name": "raise_tui_recursion_limit",
       "applied": true,
-      "reason": "Current upstream codex-mcp-server type queries exceed Rust's default recursion depth in release builds.",
-      "effect": "codex-mcp-server builds deterministically with recursion_limit 256."
+      "reason": "The embedded app-server request future exceeds Rust's default query depth in codex-tui on i686 musl.",
+      "effect": "codex-tui builds with recursion_limit at least 256; higher upstream limits are preserved."
+    },
+    {
+      "name": "raise_exec_recursion_limit",
+      "applied": true,
+      "reason": "The embedded app-server request future also exceeds Rust's default query depth in codex-exec on i686 musl.",
+      "effect": "codex-exec builds with recursion_limit at least 256; higher upstream limits are preserved."
     },
     {
       "name": "i686_musl_linux_sandbox_syscall_compile_fix",
@@ -67,8 +79,13 @@
     "rusty_v8_chromium_rust_vendor_sentinel_blobs": {},
     "rusty_v8_i686_abi_patch": null,
     "rusty_v8_i686_native_musl_patch": null,
-    "mcp_server_recursion_limit_256": true,
+    "mcp_server_present": false,
+    "mcp_server_recursion_limit_256": false,
     "mcp_server_recursion_limit_text_changed": false,
+    "tui_recursion_limit_256": true,
+    "tui_recursion_limit_text_changed": true,
+    "exec_recursion_limit_256": true,
+    "exec_recursion_limit_text_changed": true,
     "rusty_v8_archive_path": "",
     "rusty_v8_archive_member_file_output": "",
     "linux_sandbox_syscalls_patched_for_i686_musl": true,
@@ -91,13 +108,13 @@
     "rusty_v8_object_file_output": ""
   },
   "artifact": {
-    "name": "codex-linux-i686-musl-ddf04ad26789.tar.gz",
-    "sha256": "4a10b7400641783503e51abc4677dc4a8d20db91097b865ccae3d0189eccd5ee"
+    "name": "codex-linux-i686-musl-52e12e0cb506.tar.gz",
+    "sha256": "f69af349d209074579d340f0a61fb387aac1c5dd2d06801abebde3c19141cff0"
   },
   "packaged_files": [
     {
       "path": "codex",
-      "sha256": "5afc49e55fcaeeffb6dc308c8729225cdb4be813aa719d56a73847e8ffa19185"
+      "sha256": "01c81c198859f4f263cc8c5a910700757abbea18c46e8b6bd471cd3550d1f616"
     },
     {
       "path": "certs/ca-certificates.crt",
@@ -114,11 +131,11 @@
   ],
   "release_files": [
     {
-      "name": "codex-linux-i686-musl-ddf04ad26789.tar.gz",
-      "sha256": "4a10b7400641783503e51abc4677dc4a8d20db91097b865ccae3d0189eccd5ee"
+      "name": "codex-linux-i686-musl-52e12e0cb506.tar.gz",
+      "sha256": "f69af349d209074579d340f0a61fb387aac1c5dd2d06801abebde3c19141cff0"
     },
     {
-      "name": "codex-linux-i686-musl-ddf04ad26789.manifest.json",
+      "name": "codex-linux-i686-musl-52e12e0cb506.manifest.json",
       "sha256": null
     }
   ]
