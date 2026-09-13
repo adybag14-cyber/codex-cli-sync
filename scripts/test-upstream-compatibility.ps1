@@ -20,9 +20,11 @@ foreach ($functionName in @('Get-Text', 'Set-Text', 'Insert-AfterOnce', 'Set-Win
 $linuxAst = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot "sync-codex-linux-i686-musl.ps1"), [ref]$patchTokens, [ref]$patchErrors)
 if ($patchErrors.Count) { throw "Linux sync script has syntax errors: $patchErrors" }
-$definition = $linuxAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Ensure-RustCrateRecursionLimit' }, $false)
-if (-not $definition) { throw "Missing Linux recursion-limit function" }
-. ([ScriptBlock]::Create($definition.Extent.Text))
+foreach ($functionName in @('Ensure-RustCrateRecursionLimit', 'Enable-I686MuslLinuxSandboxSyscallBuild')) {
+    $definition = $linuxAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
+    if (-not $definition) { throw "Missing Linux patch function $functionName" }
+    . ([ScriptBlock]::Create($definition.Extent.Text))
+}
 
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("codex-upstream-contract-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
@@ -190,6 +192,69 @@ $signature
         }
         $testCount++
     }
+    $syscallHelper = @'
+    fn deny_syscall(rules: &mut BTreeMap<i64, Vec<SeccompRule>>, nr: i64) {
+        rules.insert(nr, vec![]); // empty rule vec = unconditional match
+    }
+'@
+    foreach ($rule in @(
+        @{ Syscall = 'socket'; Payload = 'deny_vsock.clone()' },
+        @{ Syscall = 'socketpair'; Payload = 'deny_vsock' },
+        @{ Syscall = 'socket'; Payload = 'unix_only_rule.clone()' },
+        @{ Syscall = 'socketpair'; Payload = 'unix_only_rule' },
+        @{ Syscall = 'socket'; Payload = 'deny_non_ip_socket' },
+        @{ Syscall = 'socketpair'; Payload = 'deny_unix_socketpair' },
+        @{ Syscall = 'socketpair'; Payload = 'deny_non_unix_socketpair' },
+        @{ Syscall = 'socket'; Payload = 'renamed_rule.clone(), another_rule' }
+    )) {
+        foreach ($multiline in @($false, $true)) {
+            $key = 'libc::SYS_' + $rule.Syscall
+            $call = if ($multiline) {
+                "            rules.insert(`r`n                $key,`r`n                vec![$($rule.Payload)],`r`n            );"
+            } else {
+                "            rules.insert($key, vec![$($rule.Payload)]);"
+            }
+            $root = New-Layout -Name ("sandbox-syscall-" + $testCount) -Files @{
+                'linux-sandbox/src/landlock.rs' = ($syscallHelper + "`n" + $call)
+            }
+            Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root | Out-Null
+            $patched = [IO.File]::ReadAllText((Join-Path $root 'linux-sandbox/src/landlock.rs'))
+            if (-not $patched.Contains($call.Replace($key, "$key.into()"))) {
+                throw "Syscall key was not widened while preserving the complete $($rule.Payload) rule"
+            }
+            $testCount++
+        }
+    }
+    $convertedCalls = @'
+            rules.insert(libc::SYS_socket.into(), vec![deny_vsock.clone()]);
+            rules.insert(libc::SYS_socketpair.into(), vec![deny_vsock]);
+'@
+    $root = New-Layout -Name 'sandbox-converted-keys' -Files @{
+        'linux-sandbox/src/landlock.rs' = ($syscallHelper + "`n" + $convertedCalls)
+    }
+    Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root | Out-Null
+    $patched = [IO.File]::ReadAllText((Join-Path $root 'linux-sandbox/src/landlock.rs'))
+    if (-not $patched.Contains($convertedCalls) -or $patched.Contains('.into().into()')) {
+        throw 'Already converted socket keys were changed'
+    }
+    $testCount++
+    foreach ($unsupportedCalls in @(
+        '            renamed_rules.insert(libc::SYS_socket, vec![deny_vsock]);',
+        "            rules.insert(libc::SYS_socket, vec![deny_vsock.clone()]);`n            rules.insert(libc::SYS_socketpair as _, vec![deny_vsock]);"
+    )) {
+        $original = $syscallHelper + "`n" + $unsupportedCalls
+        $root = New-Layout -Name ("sandbox-unsupported-" + $testCount) -Files @{
+            'linux-sandbox/src/landlock.rs' = $original
+        }
+        $rejected = $false
+        try { Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root | Out-Null }
+        catch { $rejected = $_.Exception.Message.StartsWith('Linux sandbox socket syscall') }
+        if (-not $rejected -or [IO.File]::ReadAllText((Join-Path $root 'linux-sandbox/src/landlock.rs')) -ne $original) {
+            throw 'Unsupported syscall source was not rejected before writing changes'
+        }
+        $testCount++
+    }
+
     $remote = New-Layout -Name 'checkout-remote' -Files @{
         'codex-rs/Cargo.toml' = "[workspace]`nmembers = []`n"
         '.gitignore' = "codex-rs/target/`n"

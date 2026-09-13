@@ -764,26 +764,18 @@ function Enable-I686MuslLinuxSandboxSyscallBuild {
 '@
     )
 
-    $text = $text.Replace(
-        "            rules.insert(libc::SYS_socket, vec![unix_only_rule.clone()]);",
-        "            rules.insert(libc::SYS_socket.into(), vec![unix_only_rule.clone()]);"
-    )
-    $text = $text.Replace(
-        "            rules.insert(libc::SYS_socketpair, vec![unix_only_rule]);",
-        "            rules.insert(libc::SYS_socketpair.into(), vec![unix_only_rule]);"
-    )
-    $text = $text.Replace(
-        "            rules.insert(libc::SYS_socket, vec![deny_non_ip_socket]);",
-        "            rules.insert(libc::SYS_socket.into(), vec![deny_non_ip_socket]);"
-    )
-    $text = $text.Replace(
-        "            rules.insert(libc::SYS_socketpair, vec![deny_unix_socketpair]);",
-        "            rules.insert(libc::SYS_socketpair.into(), vec![deny_unix_socketpair]);"
-    )
-    $text = $text.Replace(
-        "            rules.insert(libc::SYS_socketpair, vec![deny_non_unix_socketpair]);",
-        "            rules.insert(libc::SYS_socketpair.into(), vec![deny_non_unix_socketpair]);"
-    )
+    # Normalize the map key independently of the rule value. Upstream adds and
+    # renames network modes (including AF_VSOCK restrictions), but every socket
+    # syscall key must widen from libc's i32 to seccompiler's i64 on i686 musl.
+    $socketKey = '\brules\s*\.\s*insert\s*\(\s*libc::SYS_(?:socket|socketpair)\b'
+    $socketKeyCount = [regex]::Matches($text, $socketKey).Count
+    if ($socketKeyCount -eq 0) {
+        throw "Linux sandbox socket syscall anchors not found in $landlockPath"
+    }
+    $text = [regex]::Replace($text, "($socketKey)(\s*,)", '${1}.into()${2}')
+    if ([regex]::Matches($text, "$socketKey\s*\.into\(\)\s*,").Count -ne $socketKeyCount) {
+        throw "Linux sandbox socket syscall keys were not all normalized in $landlockPath"
+    }
 
     if ($text -eq $originalText) {
         throw "Linux sandbox syscall compatibility patch did not change $landlockPath"
