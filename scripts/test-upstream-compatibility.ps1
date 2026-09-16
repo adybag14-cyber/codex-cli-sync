@@ -12,7 +12,7 @@ $patchErrors = $null
 $patchAst = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot "patch-codex-windows-custom.ps1"), [ref]$patchTokens, [ref]$patchErrors)
 if ($patchErrors.Count) { throw "Windows patcher has syntax errors: $patchErrors" }
-foreach ($functionName in @('Get-Text', 'Set-Text', 'Insert-AfterOnce', 'Set-WindowsToolPermissionsBypass', 'Set-WindowsExecPolicyBypass')) {
+foreach ($functionName in @('Get-Text', 'Set-Text', 'Insert-AfterOnce', 'Set-WindowsToolPermissionsBypass', 'Set-WindowsExecPolicyBypass', 'Disable-WindowsSandboxStartupNux')) {
     $definition = $patchAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
     if (-not $definition) { throw "Missing patch function $functionName" }
     . ([ScriptBlock]::Create($definition.Extent.Text))
@@ -192,6 +192,66 @@ $signature
         }
         $testCount++
     }
+    # Exercise the old and new startup layouts without touching the opposite
+    # platform binding. These are source contracts, not a full upstream build.
+    $startupName = 'should_prompt_windows_sandbox_nux_at_startup'
+    $windowsCfg = '#[cfg(target_os = "windows")]'
+    $nonWindowsBinding = "    #[cfg(not(target_os = `"windows`"))]`n    let $startupName = false;"
+    $legacyStartup = '(trust_decision_was_made && windows_sandbox_level == WindowsSandboxLevel::Disabled) || required_elevated_sandbox_needs_setup'
+    foreach ($newline in @("`n", "`r`n")) {
+        foreach ($condition in @($legacyStartup, 'trust_decision_was_made')) {
+            $before = "fn sentinel_before() {}`n    $windowsCfg`n    let $startupName = $condition;`n$nonWindowsBinding`nfn sentinel_after() {}`n"
+            $before = $before.Replace("`n", $newline)
+            $root = New-Layout -Name ("startup-nux-" + $testCount) -Files @{ 'lib.rs' = $before }
+            $path = Join-Path $root 'lib.rs'
+            Disable-WindowsSandboxStartupNux -Path $path
+            $patched = [IO.File]::ReadAllText($path)
+            $expectedSuffix = ($nonWindowsBinding + "`nfn sentinel_after() {}`n").Replace("`n", $newline)
+            if (-not $patched.StartsWith('fn sentinel_before() {}') -or -not $patched.EndsWith($expectedSuffix) -or
+                -not $patched.Contains('// codex-cli-sync: Windows custom build never shows the startup sandbox NUX.') -or
+                -not $patched.Contains("        false${newline}    };")) {
+                throw 'Startup NUX patch did not preserve surrounding code and the non-Windows binding'
+            }
+            foreach ($name in @('windows_sandbox_level', 'required_elevated_sandbox_needs_setup')) {
+                if ($patched.Contains("&$name") -ne ($condition -eq $legacyStartup)) {
+                    throw "Startup NUX patch references the wrong layout's local: $name"
+                }
+            }
+            if ($newline -eq "`r`n" -and [regex]::IsMatch($patched, '(?<!\r)\n')) {
+                throw 'Startup NUX patch changed the CRLF line endings'
+            }
+            $testCount++
+            Disable-WindowsSandboxStartupNux -Path $path
+            if ([IO.File]::ReadAllText($path) -ne $patched) { throw 'Startup NUX patch is not idempotent' }
+            $testCount++
+        }
+    }
+    $root = New-Layout -Name 'startup-nux-whitespace' -Files @{
+        'lib.rs' = "    #[cfg(target_os=`"windows`")]`n    let $startupName =`n        trust_decision_was_made ;`n$nonWindowsBinding`n"
+    }
+    Disable-WindowsSandboxStartupNux -Path (Join-Path $root 'lib.rs')
+    $testCount++
+    $windowsBinding = "    $windowsCfg`n    let $startupName = trust_decision_was_made;`n"
+    foreach ($unsupported in @(
+        $nonWindowsBinding,
+        "    let $startupName = trust_decision_was_made;`n",
+        ($windowsBinding + $windowsBinding + $nonWindowsBinding),
+        ($windowsBinding.Replace('= trust_decision_was_made;', '= new_startup_policy();') + $nonWindowsBinding),
+        ($windowsBinding.Replace('= trust_decision_was_made;', '= trust_decision_was_made || another_condition;') + $nonWindowsBinding),
+        ($windowsBinding.Replace('= trust_decision_was_made;', '= false;') + $nonWindowsBinding),
+        ($windowsBinding.Replace('target_os = "windows"', 'target_os = "linux"') + $nonWindowsBinding)
+    )) {
+        $root = New-Layout -Name ("startup-nux-rejected-" + $testCount) -Files @{ 'lib.rs' = $unsupported }
+        $path = Join-Path $root 'lib.rs'
+        $rejected = $false
+        try { Disable-WindowsSandboxStartupNux -Path $path }
+        catch { $rejected = $_.Exception.Message.StartsWith('Windows startup NUX') }
+        if (-not $rejected -or [IO.File]::ReadAllText($path) -ne $unsupported) {
+            throw 'Unknown or ambiguous startup NUX layout was not rejected without modifying its source'
+        }
+        $testCount++
+    }
+
     $syscallHelper = @'
     fn deny_syscall(rules: &mut BTreeMap<i64, Vec<SeccompRule>>, nr: i64) {
         rules.insert(nr, vec![]); // empty rule vec = unconditional match

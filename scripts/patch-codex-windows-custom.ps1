@@ -60,6 +60,61 @@ function Ensure-RustCrateRecursionLimit {
     return $true
 }
 
+function Disable-WindowsSandboxStartupNux {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $text = Get-Text -Path $Path
+    # Match the Windows binding explicitly: upstream also has a non-Windows
+    # binding with the same name. Unknown/ambiguous layouts must still fail CI.
+    $prefixPattern = '(?m)^[ \t]*#\[cfg\(target_os\s*=\s*"windows"\)\][ \t]*\r?\n(?<indent>[ \t]*)let\s+should_prompt_windows_sandbox_nux_at_startup\s*=\s*'
+    $bindings = [regex]::Matches($text, $prefixPattern)
+    if ($bindings.Count -ne 1) {
+        throw "Windows startup NUX declaration in ${Path}: expected 1 Windows binding, found $($bindings.Count)."
+    }
+    $binding = $bindings[0]
+    $indent = $binding.Groups['indent'].Value
+    $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $bodyStart = $binding.Index + $binding.Length
+    $remaining = $text.Substring($bodyStart)
+    $marker = '// codex-cli-sync: Windows custom build never shows the startup sandbox NUX.'
+    $layouts = @(
+        @{
+            # Before the September 2026 TUI startup refactor.
+            Pattern = '\A\(trust_decision_was_made\s*&&\s*windows_sandbox_level\s*==\s*WindowsSandboxLevel::Disabled\)\s*\|\|\s*required_elevated_sandbox_needs_setup;'
+            References = @(
+                '    let _ = (',
+                '        &trust_decision_was_made,',
+                '        &windows_sandbox_level,',
+                '        &required_elevated_sandbox_needs_setup,',
+                '    );'
+            )
+        },
+        @{
+            # The refactor removed both sandbox-level/setup locals.
+            Pattern = '\Atrust_decision_was_made\s*;'
+            References = @('    let _ = &trust_decision_was_made;')
+        }
+    )
+    foreach ($layout in $layouts) {
+        $bodyLines = @('{', ($indent + '    ' + $marker))
+        $bodyLines += @($layout.References | ForEach-Object { $indent + $_ })
+        $bodyLines += @(($indent + '    false'), ($indent + '};'))
+        $replacement = $bodyLines -join $newline
+        if ($remaining.StartsWith($replacement, [StringComparison]::Ordinal)) {
+            Write-Host 'Kept: Windows startup NUX patch'
+            return
+        }
+        $expression = [regex]::Match($remaining, $layout.Pattern)
+        if ($expression.Success) {
+            $updated = $text.Substring(0, $bodyStart) + $replacement + $remaining.Substring($expression.Length)
+            Set-Text -Path $Path -Text $updated
+            Write-Host 'Patched: disable Windows sandbox startup NUX prompt'
+            return
+        }
+    }
+    throw "Windows startup NUX expression in $Path is not a supported upstream layout. No changes written."
+}
+
 function Replace-Once {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -583,20 +638,7 @@ Replace-Optional `
     -Replacement 'pub const ELEVATED_SANDBOX_NUX_ENABLED: bool = false;' `
     -Description "disable legacy elevated sandbox NUX kill switch"
 
-Replace-Once `
-    -Path $tuiLibPath `
-    -Pattern 'let\s+should_prompt_windows_sandbox_nux_at_startup\s*=\s*\(trust_decision_was_made\s*&&\s*windows_sandbox_level\s*==\s*WindowsSandboxLevel::Disabled\)\s*\|\|\s*required_elevated_sandbox_needs_setup;' `
-    -Replacement @'
-let should_prompt_windows_sandbox_nux_at_startup = {
-        let _ = (
-            &trust_decision_was_made,
-            &windows_sandbox_level,
-            &required_elevated_sandbox_needs_setup,
-        );
-        false
-    };
-'@ `
-    -Description "disable Windows sandbox startup NUX prompt"
+Disable-WindowsSandboxStartupNux -Path $tuiLibPath
 
 $sandboxOnboardingHintManaged = Disable-WindowsSandboxOnboardingHint -Path $onboardingScreenPath
 
@@ -658,7 +700,7 @@ Assert-Contains -Path $execLibPath -Needle '#![recursion_limit = "256"]' -Descri
 Assert-Contains -Path $tuiLibPath -Needle '#![recursion_limit = "256"]' -Description "codex-tui recursion limit"
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(AskForApproval::Never)' -Description "approval policy override"
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(PermissionProfile::Disabled)' -Description "permission profile override"
-Assert-Contains -Path $tuiLibPath -Needle 'let should_prompt_windows_sandbox_nux_at_startup = {' -Description "sandbox startup NUX disabled"
+Assert-Contains -Path $tuiLibPath -Needle '// codex-cli-sync: Windows custom build never shows the startup sandbox NUX.' -Description "sandbox startup NUX disabled"
 if ($sandboxOnboardingHintManaged) {
     Assert-Contains -Path $onboardingScreenPath -Needle '// codex-cli-sync: Windows custom build never shows the sandbox onboarding hint.' -Description "sandbox onboarding hint disabled"
 }
