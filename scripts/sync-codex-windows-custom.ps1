@@ -423,15 +423,28 @@ Push-Location (Join-Path $sourceDir "codex-rs")
 try {
     $compatibilityTest = "suite::client::openai_stateless_responses_requests_preserve_item_turn_metadata_across_turns"
     $previousRustMinStack = $env:RUST_MIN_STACK
+    $testRustyV8Archive = $env:RUSTY_V8_ARCHIVE
+    $testRustyV8Binding = $env:RUSTY_V8_SRC_BINDING_PATH
     try {
         # Match upstream Windows CI so the aggregated core test binary does not overflow the
         # platform's smaller default test-thread stack before reaching the focused assertion.
         $env:RUST_MIN_STACK = "8388608"
+        $env:RUSTY_V8_ARCHIVE = $rustyV8Artifacts.ArchivePath
+        $env:RUSTY_V8_SRC_BINDING_PATH = $rustyV8Artifacts.BindingPath
         cargo test -p codex-core --test all $compatibilityTest -- --exact
         if ($LASTEXITCODE -ne 0) {
             throw "OpenAI request metadata compatibility test failed with exit code $LASTEXITCODE"
         }
+        # Exercise actual dynamic tool calls and content responses against the upstream mock server.
+        cargo test -p codex-app-server --test all suite::v2::dynamic_tools::
+        if ($LASTEXITCODE -ne 0) {
+            throw "Dynamic tool protocol compatibility tests failed with exit code $LASTEXITCODE"
+        }
     } finally {
+        if ($null -eq $testRustyV8Archive) { Remove-Item Env:RUSTY_V8_ARCHIVE -ErrorAction SilentlyContinue }
+        else { $env:RUSTY_V8_ARCHIVE = $testRustyV8Archive }
+        if ($null -eq $testRustyV8Binding) { Remove-Item Env:RUSTY_V8_SRC_BINDING_PATH -ErrorAction SilentlyContinue }
+        else { $env:RUSTY_V8_SRC_BINDING_PATH = $testRustyV8Binding }
         if ($null -eq $previousRustMinStack) {
             Remove-Item Env:RUST_MIN_STACK -ErrorAction SilentlyContinue
         } else {
@@ -466,7 +479,14 @@ try {
 
 $targetDir = Join-Path $sourceDir "codex-rs\target\$WindowsTarget\release"
 $payloadRoot = Join-Path $releaseWorkspace $payloadName
-$resourcesDir = Join-Path $payloadRoot "codex-resources"
+$binDir = Join-Path $payloadRoot "bin"
+
+$workspacePrefix = [IO.Path]::GetFullPath($WorkspaceDir).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+$releaseWorkspace = [IO.Path]::GetFullPath($releaseWorkspace)
+if (-not $releaseWorkspace.StartsWith($workspacePrefix, [StringComparison]::OrdinalIgnoreCase) -or
+    [IO.Path]::GetFileName($releaseWorkspace) -ne "custom-$upstreamShortSha") {
+    throw "Unsafe release workspace: $releaseWorkspace"
+}
 
 if (Test-Path -LiteralPath $releaseWorkspace) {
     Remove-Item -Recurse -Force -LiteralPath $releaseWorkspace
@@ -478,12 +498,11 @@ if (Test-Path -LiteralPath $manifestPath) {
     Remove-Item -Force -LiteralPath $manifestPath
 }
 
-New-Item -ItemType Directory -Force -Path $resourcesDir | Out-Null
-Copy-RequiredBinary -Source (Join-Path $targetDir "codex.exe") -Destination (Join-Path $payloadRoot "codex.exe")
-Copy-RequiredBinary -Source (Join-Path $targetDir "codex-command-runner.exe") -Destination (Join-Path $resourcesDir "codex-command-runner.exe")
-Copy-RequiredBinary -Source (Join-Path $targetDir "codex-windows-sandbox-setup.exe") -Destination (Join-Path $resourcesDir "codex-windows-sandbox-setup.exe")
-Copy-RequiredBinary -Source (Join-Path $targetDir "codex-code-mode-host.exe") -Destination (Join-Path $resourcesDir "codex-code-mode-host.exe")
-Install-RipgrepWindowsX64 -DestinationPath (Join-Path $resourcesDir "rg.exe")
+$ripgrepPath = Join-Path $WorkspaceDir 'package-rg.exe'
+Install-RipgrepWindowsX64 -DestinationPath $ripgrepPath
+. (Join-Path $scriptRoot 'New-WindowsCodexPackage.ps1')
+$packageLayout = New-WindowsCodexPackage -SourceRoot $sourceDir -BinaryDir $targetDir `
+    -RipgrepPath $ripgrepPath -Destination $payloadRoot -Version $customVersion -Target $WindowsTarget
 Set-Content -Path (Join-Path $payloadRoot "VERSION.txt") -Value ($customVersion + "`n") -Encoding utf8
 
 $upstreamInstaller = Join-Path $sourceDir "scripts\install\install.ps1"
@@ -493,7 +512,7 @@ if (Test-Path -LiteralPath $upstreamInstaller -PathType Leaf) {
     Set-Content -Path $installScriptPath -Value "# Upstream install.ps1 was not present in this Codex revision.`n" -Encoding utf8
 }
 
-$versionOutput = & (Join-Path $payloadRoot "codex.exe") --version
+$versionOutput = & (Join-Path $binDir "codex.exe") --version
 if ($LASTEXITCODE -ne 0) {
     throw "Packaged codex.exe --version failed with exit code $LASTEXITCODE"
 }
@@ -502,7 +521,7 @@ if (-not ([string]$versionOutput).Contains($customVersion)) {
 }
 Write-Host "Packaged $versionOutput"
 
-$codeModeHostHelp = & (Join-Path $resourcesDir "codex-code-mode-host.exe") --help
+$codeModeHostHelp = & (Join-Path $binDir "codex-code-mode-host.exe") --help
 if ($LASTEXITCODE -ne 0) {
     throw "Packaged codex-code-mode-host.exe --help failed with exit code $LASTEXITCODE"
 }
@@ -511,6 +530,27 @@ if (-not $codeModeHostHelpText.Contains("--listen")) {
     throw "Packaged codex-code-mode-host.exe help did not include the expected --listen option."
 }
 Write-Host "Packaged codex-code-mode-host.exe smoke test passed."
+
+& dotnet publish (Join-Path (Split-Path -Parent $scriptRoot) 'tools/CodexSyncDoctor/CodexSyncDoctor.csproj') `
+    --configuration Release --runtime win-x64 --self-contained true `
+    -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false `
+    --output (Join-Path $WorkspaceDir 'sync-doctor-publish')
+if ($LASTEXITCODE -ne 0) {
+    throw "Windows .NET companion publication failed with exit code $LASTEXITCODE"
+}
+$doctorPath = Join-Path $payloadRoot 'codex-resources/codex-sync-doctor.exe'
+Copy-Item -LiteralPath (Join-Path $WorkspaceDir 'sync-doctor-publish/codex-sync-doctor.exe') -Destination $doctorPath
+& $doctorPath self-test
+if ($LASTEXITCODE -ne 0) { throw 'Packaged .NET companion self-test failed.' }
+& $doctorPath inspect-package $payloadRoot
+if ($LASTEXITCODE -ne 0) { throw 'Packaged .NET companion rejected the release layout.' }
+
+& python (Join-Path $scriptRoot 'test-windows-cli-runtime.py') `
+    --package $payloadRoot --source-root $sourceDir --require-visible-debug `
+    --output (Join-Path $payloadRoot 'runtime-checks.json')
+if ($LASTEXITCODE -ne 0) {
+    throw "Packaged Windows CLI runtime checks failed with exit code $LASTEXITCODE"
+}
 
 Compress-Archive -Path $payloadRoot -DestinationPath $bundlePath -CompressionLevel Optimal
 
@@ -540,7 +580,11 @@ $manifest = [ordered]@{
         tool_sandbox_escalation    = "UseDefault and preapproved on Windows"
         login_callback_port        = "Registered OAuth redirect ports 1455 and 1457, with PermissionDenied fallback handling"
         openai_request_metadata    = "Preserve internal annotations while omitting unsupported content_item_kinds from OpenAI request payloads"
-        code_mode_host             = "Bundled under codex-resources and smoke-tested with --help"
+        code_mode_host             = "Bundled in bin beside codex.exe and smoke-tested with --help"
+        package_layout            = "Upstream canonical layout v1 with bin, codex-path, codex-resources, and codex-package.json"
+        debug_commands            = "All upstream DebugSubcommand variants visible in Windows help and checked with --help"
+        tool_schema_compatibility = "Native app-server RPC checks for canonical, legacy, namespaced, nullable, and sanitizable dynamic tool schemas; invalid definitions remain rejected"
+        sync_doctor               = "Self-contained .NET companion inspects browser policy and repairs legacy package layout using the upstream generator; no browser security modifications"
     }
     rusty_v8           = [ordered]@{
         version         = $rustyV8Artifacts.Version

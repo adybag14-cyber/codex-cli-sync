@@ -12,7 +12,7 @@ $patchErrors = $null
 $patchAst = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot "patch-codex-windows-custom.ps1"), [ref]$patchTokens, [ref]$patchErrors)
 if ($patchErrors.Count) { throw "Windows patcher has syntax errors: $patchErrors" }
-foreach ($functionName in @('Get-Text', 'Set-Text', 'Insert-AfterOnce', 'Set-WindowsToolPermissionsBypass', 'Set-WindowsExecPolicyBypass', 'Disable-WindowsSandboxStartupNux')) {
+foreach ($functionName in @('Get-Text', 'Set-Text', 'Insert-AfterOnce', 'Set-WindowsToolPermissionsBypass', 'Set-WindowsExecPolicyBypass', 'Disable-WindowsSandboxStartupNux', 'Show-WindowsDebugCommands')) {
     $definition = $patchAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
     if (-not $definition) { throw "Missing patch function $functionName" }
     . ([ScriptBlock]::Create($definition.Extent.Text))
@@ -54,6 +54,45 @@ function Assert-Rejected {
 }
 
 try {
+    foreach ($newline in @("`n", "`r`n")) {
+        $fixture = @'
+#[clap(hide = true)]
+enum Unrelated { KeepHidden }
+enum DebugSubcommand {
+    Models(DebugModelsCommand),
+    #[clap(hide = true)]
+    TraceReduce(DebugTraceReduceCommand),
+    #[command(hide = true)]
+    ClearMemories,
+}
+'@ -replace '\r?\n', $newline
+        $root = New-Layout -Name ("debug-visibility-" + $testCount) -Files @{ 'main.rs' = $fixture }
+        $path = Join-Path $root 'main.rs'
+        Show-WindowsDebugCommands -Path $path
+        $patched = [IO.File]::ReadAllText($path)
+        if (-not $patched.StartsWith('#[clap(hide = true)]') -or
+            -not $patched.Contains('#[cfg_attr(not(target_os = "windows"), clap(hide = true))]') -or
+            -not $patched.Contains('#[cfg_attr(not(target_os = "windows"), command(hide = true))]')) {
+            throw 'Debug visibility patch changed unrelated commands or missed a hidden variant'
+        }
+        if ($newline -eq "`r`n" -and [regex]::IsMatch($patched, '(?<!\r)\n')) {
+            throw 'Debug visibility patch changed CRLF line endings'
+        }
+        Show-WindowsDebugCommands -Path $path
+        if ([IO.File]::ReadAllText($path) -ne $patched) { throw 'Debug visibility patch is not idempotent' }
+        $testCount++
+    }
+    foreach ($fixture in @('enum Other { Models }', "enum DebugSubcommand {`n}`nenum DebugSubcommand {`n}")) {
+        $root = New-Layout -Name ("debug-refusal-" + $testCount) -Files @{ 'main.rs' = $fixture }
+        $path = Join-Path $root 'main.rs'
+        $rejected = $false
+        try { Show-WindowsDebugCommands -Path $path }
+        catch { $rejected = $_.Exception.Message.Contains('Expected exactly one DebugSubcommand') }
+        if (-not $rejected -or [IO.File]::ReadAllText($path) -ne $fixture) {
+            throw 'Debug visibility patch did not reject source drift without changing the file'
+        }
+        $testCount++
+    }
     $removed = New-Layout -Name "removed" -Files @{
         "Cargo.toml" = "[workspace]`nmembers = [`"cli`", `"mcp-client`"]`n"
         "Cargo.lock" = "version = 4`n"

@@ -60,6 +60,34 @@ function Ensure-RustCrateRecursionLimit {
     return $true
 }
 
+function Show-WindowsDebugCommands {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $text = Get-Text -Path $Path
+    $enumPattern = '(?ms)^enum DebugSubcommand \{\r?\n.*?^\}'
+    $matches = [regex]::Matches($text, $enumPattern)
+    if ($matches.Count -ne 1) {
+        throw "Expected exactly one DebugSubcommand enum in $Path; found $($matches.Count)."
+    }
+    $original = $matches[0].Value
+    $updated = [regex]::Replace(
+        $original,
+        '(?m)^(?<indent>[ \t]*)#\[(?<attribute>clap|command)\(hide\s*=\s*true\)\]',
+        [System.Text.RegularExpressions.MatchEvaluator]{
+            param($match)
+            $match.Groups['indent'].Value + '#[cfg_attr(not(target_os = "windows"), ' +
+                $match.Groups['attribute'].Value + '(hide = true))]'
+        })
+    if ($updated -ne $original) {
+        $text = $text.Substring(0, $matches[0].Index) + $updated +
+            $text.Substring($matches[0].Index + $matches[0].Length)
+        Set-Text -Path $Path -Text $text
+        Write-Host 'Patched: show every upstream debug command in Windows help'
+    } else {
+        Write-Host 'Kept: upstream debug commands are visible on Windows'
+    }
+}
+
 function Disable-WindowsSandboxStartupNux {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -531,7 +559,10 @@ $sessionPath = Get-SourceFile -RelativePath "codex-rs\core\src\session\mod.rs"
 $execLibPath = Get-SourceFile -RelativePath "codex-rs\exec\src\lib.rs"
 $tuiLibPath = Get-SourceFile -RelativePath "codex-rs\tui\src\lib.rs"
 $onboardingScreenPath = Get-SourceFile -RelativePath "codex-rs\tui\src\onboarding\onboarding_screen.rs"
+$cliMainPath = Get-SourceFile -RelativePath "codex-rs\cli\src\main.rs"
 $mcpServerLibPath = Resolve-UpstreamMcpServerCrateRoot -CodexRsDir (Join-Path $SourceRoot "codex-rs")
+
+Show-WindowsDebugCommands -Path $cliMainPath
 
 if ($mcpServerLibPath) {
     $mcpServerRecursionLimitPatched = Ensure-RustCrateRecursionLimit -Path $mcpServerLibPath -Minimum 256

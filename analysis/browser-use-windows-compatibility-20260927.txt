@@ -1,0 +1,122 @@
+Browser Use and Windows CLI compatibility: verified 2026-09-27
+
+Evidence identities
+  Sync repository base: 5efcefd8936b7966fd121c6667c9ae11b13d8a9e
+  OpenAI Codex source: 41f9084b30812db321a0b592def4f500d1e79cf4
+  Installed custom CLI: 0.0.0-custom.202609261919
+  CLI executable SHA256: 22a837f5c8f47085a84a9a4d00864c614a1a27397fc044b403b493017641c952
+  Installed browser plugin: openai-bundled/browser/26.924.22138
+  browser-service.mjs SHA256:
+    b40b10c44f2397b3137c40060ace432cc2487e6075b07551a6944f81bea3bb91
+
+Claim and result
+  "Browser Use configuration supports rules for those two schemes, and setting
+  access to allow still leaves the tool's other policy checks in force."
+
+  The schemes were not named. Testing establishes that this statement is true
+  for HTTP and HTTPS, but false for file and data in the installed browser bundle.
+  The CLI accepting a configuration key does not establish browser support.
+
+  Native config/read preserves http://example.com, https://example.com,
+  file://*, and data:* origin keys. Upstream models origins as a map with string
+  keys in codex-rs/config/src/browser_use.rs and the app-server protocol.
+
+  In the installed browser service, the independent navigation predicate $x
+  uses Object.freeze(["http:","https:"]) and an exact about:blank exception.
+  hS and bS accept only HTTP/HTTPS origins and patterns. Invalid patterns are
+  ignored. xM resolves origin policy separately; pi makes deny win over allow.
+  RZ retains network policy checks and reports unavailable requirements.
+  These minified symbols are specific to the fingerprint above.
+
+  Both live Browser Use goto calls were rejected before navigation:
+    data:text/plain,CODEX_SCHEME_PROBE
+    file:///.../probe.html (an agent-created, harmless test file)
+  Reason: navigation_url_policy_blocked; allowed protocols: http:, https:.
+
+  The unchanged policy functions passed 21 executable checks, covering matching,
+  managed denies, network denies, unavailable requirements, upload/download/CDP
+  restrictions, invalid protocols, and the exact about:blank exception.
+  scripts/verify-installed-browser-policy.cjs reproduces these checks without
+  executing browser/network APIs or changing the service. It requires the exact
+  known bundle hash and rejects an unknown version rather than guessing.
+
+Configuration implications
+  Supported examples in CODEX_HOME/config.toml:
+
+    [browser_use.origins."http://example.com"]
+    access = "allow"
+
+    [browser_use.origins."https://example.com"]
+    access = "allow"
+
+  These are exact origins and separate protocol/port matches. They can override
+  a user default deny for that origin; they cannot override a managed deny.
+  Unset access already defaults to allow. Allow is not an automatic browser
+  approval and does not remove site, capability, saved-permission, or review
+  checks. No working config-only change adds file/data navigation to this bundle.
+  No edits were made to the user's active config or the browser plugin.
+
+Windows release changes
+  1. Use scripts/build_codex_package.py from the resolved upstream checkout.
+     It produces bin/codex.exe, bin/codex-code-mode-host.exe, codex-path/rg.exe,
+     Windows helpers under codex-resources, and codex-package.json layout v1.
+     This fixes the old flat ZIP's incompatibility with default daemon startup.
+     CODEX_REPO_ROOT is set to the exact source checkout for the generator.
+
+  2. Show every upstream DebugSubcommand variant in Windows help. In the checked
+     source these are models, app-server, prompt-input, trace-reduce, and
+     clear-memories. The latter two already execute when explicitly named; they
+     were hidden from help. Non-Windows help retains upstream visibility.
+     Tests inspect destructive commands only with --help, never execute them.
+
+  3. Gate releases on generated experimental protocol schema parsing, supported
+     dynamic tool registration, and isolated daemon startup/shutdown. The
+     checked CLI accepts canonical and legacy functions, namespace/deferred
+     functions, nullable fields, and schemas whose missing type can be inferred.
+     Unsupported tool input schemas and mixed wire formats remain errors.
+     The build also runs upstream app-server dynamic_tools integration tests
+     against its mock Responses server before publication.
+
+  4. Bundle a self-contained Windows x64 .NET 10 codex-sync-doctor.exe. It can
+     inspect a specified browser-service.mjs, inspect canonical packages, print
+     supported exact-origin TOML, and repair a legacy package into a NEW directory
+     using the upstream Python generator. It compares all five executable hashes,
+     preserves the source, and does not activate or restart the user's CLI.
+     It does not patch browser security gates or modify server behavior.
+
+Local validation
+  - 65 PowerShell upstream compatibility contracts passed.
+  - Entire existing custom patch plus Windows debug visibility applied to the
+    exact upstream source above; git diff --check passed.
+  - The patched DebugSubcommand enum compiled in a native Windows fixture with
+    upstream's locked Clap 4.5.58; all five commands rendered in its help output.
+  - 21 installed Browser Use policy checks passed; live file/data rejection
+    matched the source predicate.
+  - .NET build/publish succeeded with zero build warnings or errors.
+  - 12 .NET companion integration checks plus 9 origin normalization checks passed.
+  - The preserved legacy Windows release was repackaged by both the .NET repair
+    command and the PowerShell release helper using the real upstream generator.
+    All five executable hashes were preserved.
+  - The repaired package passed 19 native runtime checks and emitted 440 parseable
+    protocol schemas. A daemon in a fresh, short CODEX_HOME started the exact
+    packaged executable, reported its version, and was stopped afterward.
+
+Validation limits
+  Local package probes used the existing September 26 binaries; they are not a
+  claim that a new full Codex release has been compiled or published. The new
+  Windows build requires debug commands to be visible in the built executable.
+  Source patches and release gates do not make arbitrary schemas, protocols,
+  unknown methods, or server-rejected calls valid. Browser support belongs to
+  the separately installed service, not to the Windows sandbox patch.
+
+Commands
+  node scripts/verify-installed-browser-policy.cjs <installed-browser-service.mjs>
+  codex-sync-doctor inspect-browser <installed-browser-service.mjs>
+  codex-sync-doctor inspect-package <canonical-package-root>
+  codex-sync-doctor suggest-origin https://example.com/path
+  codex-sync-doctor repair-package <legacy-root> <new-directory> <openai-codex-source>
+  python scripts/test-windows-cli-runtime.py --package <package-root> --source-root <openai-codex-source> --output <report.json>
+
+  Python is required for repair-package because it invokes the supplied upstream
+  generator. Browser inspection and package inspection do not require Python or
+  a separately installed .NET runtime when using the published self-contained exe.
