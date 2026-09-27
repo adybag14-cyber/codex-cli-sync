@@ -1,0 +1,58 @@
+name: Windows Compatibility Contracts
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'tools/CodexSyncDoctor/**'
+      - '.github/workflows/*windows*.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - 'tools/CodexSyncDoctor/**'
+      - '.github/workflows/*windows*.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  contracts:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Check PowerShell Compatibility Contracts
+        shell: pwsh
+        run: ./scripts/test-upstream-compatibility.ps1
+      - name: Check Out Verified Upstream Packaging Source
+        uses: actions/checkout@v6
+        with:
+          repository: openai/codex
+          ref: 41f9084b30812db321a0b592def4f500d1e79cf4
+          path: out/contract-upstream
+          persist-credentials: false
+      - name: Verify Patch Against Upstream
+        shell: pwsh
+        run: |
+          ./scripts/patch-codex-windows-custom.ps1 -SourceRoot out/contract-upstream
+          git -C out/contract-upstream diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Upstream patch has whitespace errors.' }
+      - name: Build .NET Companion And Test Real Package Generator
+        shell: pwsh
+        run: |
+          dotnet build tools/CodexSyncDoctor/CodexSyncDoctor.csproj --configuration Release --output out/doctor
+          if ($LASTEXITCODE -ne 0) { throw 'Companion build failed.' }
+          python scripts/test-sync-doctor.py --doctor out/doctor/codex-sync-doctor.exe --source-root out/contract-upstream
+          if ($LASTEXITCODE -ne 0) { throw 'Companion integration tests failed.' }

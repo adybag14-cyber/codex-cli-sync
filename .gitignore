@@ -1,1 +1,4 @@
 out/
+tools/**/bin/
+tools/**/obj/
+**/__pycache__/
