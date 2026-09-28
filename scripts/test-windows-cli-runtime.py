@@ -175,10 +175,13 @@ def main():
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--require-visible-debug", action="store_true")
+    parser.add_argument("--require-no-daemon", action="store_true")
     parser.add_argument("--require-daemon-lifecycle", action="store_true",
                         help="Fail unless running non-elevated so full daemon startup/shutdown is exercised")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.require_no_daemon and args.require_daemon_lifecycle:
+        parser.error("Daemon removal and legacy daemon lifecycle checks are mutually exclusive")
     elevated = windows_token_is_elevated()
     if args.require_daemon_lifecycle and elevated:
         raise AssertionError("Full daemon lifecycle checks require a non-elevated Windows terminal")
@@ -297,7 +300,13 @@ access = "allow"
                 response = rpc.request("thread/start", {"cwd": str(workspace), "ephemeral": True, "dynamicTools": tools})
                 if not response.get("thread", {}).get("id"):
                     raise AssertionError(f"No thread ID after registering {label}")
+                if args.require_no_daemon and (response.get("approvalPolicy") != "never"
+                                              or response.get("sandbox") != {"type": "dangerFullAccess"}):
+                    raise AssertionError("Daemon removal regressed the Windows approval/sandbox overrides: "
+                                         + str({key: response.get(key) for key in ("approvalPolicy", "sandbox")}))
                 checks.append(f"dynamic_tool_registration:{label}")
+            if args.require_no_daemon:
+                checks.append("windows_approval_never_and_sandbox_disabled_preserved")
             for label, tools in {
                 "invalid_root_schema": [function({"type": "null"})],
                 "mixed_legacy_and_canonical": [function(object_schema), function(object_schema, legacy=True)],
@@ -306,25 +315,32 @@ access = "allow"
                 checks.append(f"invalid_tool_rejected:{label}")
         finally:
             rpc.close()
-        checks.extend(check_isolated_daemon(
-            config_home=config_home, executable=executable, expected_version=metadata["version"],
-            elevated=elevated, run=run, run_result=run_result,
-        ))
+        if args.require_no_daemon:
+            from importlib.util import module_from_spec, spec_from_file_location
+            spec = spec_from_file_location("no_daemon", Path(__file__).with_name("test-no-daemon-runtime.py"))
+            no_daemon = module_from_spec(spec)
+            spec.loader.exec_module(no_daemon)
+            checks.extend(no_daemon.check_disabled_commands(run_result, config_home))
+        else:
+            checks.extend(check_isolated_daemon(
+                config_home=config_home, executable=executable, expected_version=metadata["version"],
+                elevated=elevated, run=run, run_result=run_result,
+            ))
     report = {"version": version, "packageLayout": metadata, "debugCommands": commands,
               "debugCommandsRequiredVisible": args.require_visible_debug, "schemaFileCount": len(schema_files),
               "executableSha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
               "passed": len(checks), "checks": checks,
               "daemonProbe": {"tokenElevated": elevated,
-                              "mode": "elevated_rejection" if elevated else "non_elevated_lifecycle",
-                              "lifecycleExercised": not elevated},
+                              "mode": "disabled" if args.require_no_daemon else ("elevated_rejection" if elevated else "non_elevated_lifecycle"),
+                              "lifecycleExercised": not args.require_no_daemon and not elevated},
               "scope": ("Offline CLI, schema generation, tool registration, and "
-                        + ("elevated daemon rejection (startup/shutdown is not exercised). " if elevated
+                        + ("local daemon entry points disabled. " if args.require_no_daemon else "elevated daemon rejection (startup/shutdown is not exercised). " if elevated
                            else "isolated daemon startup/shutdown. ")
                         + "Tool execution round trips are covered by the upstream app-server dynamic_tools test suite.")}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"Passed {len(checks)} packaged Windows runtime checks; generated {len(schema_files)} valid JSON schema files.")
-    print(f"Daemon probe: {report['daemonProbe']['mode']}; lifecycleExercised={not elevated}.")
+    print(f"Daemon probe: {report['daemonProbe']['mode']}; lifecycleExercised={report['daemonProbe']['lifecycleExercised']}.")
 
 
 if __name__ == "__main__":

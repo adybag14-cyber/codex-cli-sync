@@ -546,11 +546,15 @@ if ($LASTEXITCODE -ne 0) { throw 'Packaged .NET companion self-test failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Packaged .NET companion rejected the release layout.' }
 
 & python (Join-Path $scriptRoot 'test-windows-cli-runtime.py') `
-    --package $payloadRoot --source-root $sourceDir --require-visible-debug `
+    --package $payloadRoot --source-root $sourceDir --require-visible-debug --require-no-daemon `
     --output (Join-Path $payloadRoot 'runtime-checks.json')
 if ($LASTEXITCODE -ne 0) {
     throw "Packaged Windows CLI runtime checks failed with exit code $LASTEXITCODE"
 }
+
+& python (Join-Path $scriptRoot 'test-no-daemon-runtime.py') --codex (Join-Path $binDir 'codex.exe') `
+    --output (Join-Path $payloadRoot 'no-daemon-checks.json')
+if ($LASTEXITCODE -ne 0) { throw 'Daemon-free default interactive startup and hi smoke failed.' }
 
 Compress-Archive -Path $payloadRoot -DestinationPath $bundlePath -CompressionLevel Optimal
 
@@ -571,6 +575,7 @@ $manifest = [ordered]@{
         sha256 = $bundleSha256
     }
     patch_contract     = [ordered]@{
+        local_daemon              = "Disabled: embedded local TUI, no implicit attachment, lifecycle and updater rejected"
         approval_policy            = "AskForApproval::Never on Windows"
         runtime_permission_profile = "PermissionProfile::Disabled on Windows"
         windows_sandbox_mode       = "None on Windows"
