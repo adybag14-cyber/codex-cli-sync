@@ -32,6 +32,17 @@ def check_entry_guard(text, name):
 def patched_sources(sources):
     result = dict(sources)
     daemon = "codex-rs/app-server-daemon/src/lib.rs"
+    public_entries = {
+        daemon: {"probe_app_server_version", "run", "bootstrap", "ensure_remote_control_ready",
+                 "enable_remote_control_on_socket", "start_remote_control_pairing", "set_remote_control",
+                 "run_pid_update_loop", "update"},
+        "codex-rs/app-server-daemon/src/launch.rs": {"start_with_features", "restart_with_features"},
+        "codex-rs/app-server-daemon/src/prepare_install.rs": {"update_from_cli"},
+    }
+    for path, expected in public_entries.items():
+        found = set(re.findall(r"^pub (?:async )?fn ([a-z_]+)\(", sources[path], re.M))
+        if found != expected:
+            raise ValueError(f"Daemon public entry points changed in {path}: {sorted(found ^ expected)}")
     for name in ("run", "bootstrap", "ensure_remote_control_ready", "enable_remote_control_on_socket",
                  "start_remote_control_pairing", "set_remote_control", "run_pid_update_loop", "update"):
         check_entry_guard(result[daemon], name)

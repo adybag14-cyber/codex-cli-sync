@@ -14,7 +14,7 @@ def fixture():
     def entry(name):
         return f"pub async fn {name}() -> Result<()> {{\n    ensure_supported_platform()?;\n    original().await\n}}\n"
     return dict(zip(patcher.FILES, (
-        "".join(entry(n) for n in ("run", "bootstrap", "ensure_remote_control_ready",
+        "".join(entry(n) for n in ("probe_app_server_version", "run", "bootstrap", "ensure_remote_control_ready",
                                   "enable_remote_control_on_socket", "start_remote_control_pairing",
                                   "set_remote_control", "run_pid_update_loop", "update"))
         + '#[cfg(any(unix, windows))]\nfn ensure_supported_platform() -> Result<()> {\n    Ok(())\n}',
@@ -60,8 +60,15 @@ class Contracts(unittest.TestCase):
     def test_lifecycle_side_effect_before_guard_is_rejected(self):
         values = fixture()
         values[patcher.FILES[0]] = values[patcher.FILES[0]].replace(
-            "ensure_supported_platform()?;", "create_state();\n    ensure_supported_platform()?;", 1)
+            "pub async fn run() -> Result<()> {\n    ensure_supported_platform()?;",
+            "pub async fn run() -> Result<()> {\n    create_state();\n    ensure_supported_platform()?;", 1)
         with self.assertRaisesRegex(ValueError, "first-operation guard: run"):
+            patcher.patched_sources(values)
+
+    def test_new_unreviewed_public_entry_is_rejected(self):
+        values = fixture()
+        values[patcher.FILES[0]] += "\npub async fn new_start() -> Result<()> { start().await }\n"
+        with self.assertRaisesRegex(ValueError, "public entry points changed"):
             patcher.patched_sources(values)
 
     def test_duplicate_anchor_is_rejected(self):
