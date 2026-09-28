@@ -1,17 +1,17 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "814de47b69dd63a2660fd14f9af66690888d183e",
-  "custom_version": "0.0.0-custom.202609270520",
+  "upstream_sha": "44fe510ce3ee61c8ef623adcbf89b901c73ddd61",
+  "custom_version": "0.0.0-custom.202609280850",
   "windows_target": "x86_64-pc-windows-msvc",
-  "generated_at_utc": "2026-09-27T05:20:04.6045469Z",
-  "release_tag": "custom-windows-x64-814de47b69dd",
+  "generated_at_utc": "2026-09-28T08:49:59.4833995Z",
+  "release_tag": "custom-windows-x64-44fe510ce3ee",
   "rolling_tag": "latest-windows-x64-custom",
   "patch_status": "applied",
   "custom_patches_failed": false,
   "artifact": {
-    "name": "codex-windows-x64-custom-814de47b69dd.zip",
-    "sha256": "fed496ab73a0185b373bb943ecf254e89dd6c88e6fd6277dd06656ac3abdf8d3"
+    "name": "codex-windows-x64-custom-44fe510ce3ee.zip",
+    "sha256": "57e3cd34561477de0c10fdde210fb6c699bc4e9ab779606ab44b266ece22b999"
   },
   "patch_contract": {
     "approval_policy": "AskForApproval::Never on Windows",
@@ -23,7 +23,11 @@
     "tool_sandbox_escalation": "UseDefault and preapproved on Windows",
     "login_callback_port": "Registered OAuth redirect ports 1455 and 1457, with PermissionDenied fallback handling",
     "openai_request_metadata": "Preserve internal annotations while omitting unsupported content_item_kinds from OpenAI request payloads",
-    "code_mode_host": "Bundled under codex-resources and smoke-tested with --help"
+    "code_mode_host": "Bundled in bin beside codex.exe and smoke-tested with --help",
+    "package_layout": "Upstream canonical layout v1 with bin, codex-path, codex-resources, and codex-package.json",
+    "debug_commands": "All upstream DebugSubcommand variants visible in Windows help and checked with --help",
+    "tool_schema_compatibility": "Native app-server RPC checks for canonical, legacy, namespaced, nullable, and sanitizable dynamic tool schemas; invalid definitions remain rejected",
+    "sync_doctor": "Self-contained .NET companion inspects browser policy and repairs legacy package layout using the upstream generator; no browser security modifications"
   },
   "rusty_v8": {
     "version": "150.4.0",
@@ -35,11 +39,11 @@
   },
   "release_files": [
     {
-      "name": "codex-windows-x64-custom-814de47b69dd.zip",
-      "sha256": "fed496ab73a0185b373bb943ecf254e89dd6c88e6fd6277dd06656ac3abdf8d3"
+      "name": "codex-windows-x64-custom-44fe510ce3ee.zip",
+      "sha256": "57e3cd34561477de0c10fdde210fb6c699bc4e9ab779606ab44b266ece22b999"
     },
     {
-      "name": "codex-windows-x64-custom-814de47b69dd.manifest.json",
+      "name": "codex-windows-x64-custom-44fe510ce3ee.manifest.json",
       "sha256": null
     },
     {
