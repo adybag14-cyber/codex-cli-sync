@@ -18,7 +18,7 @@ The workflow also builds a Linux i686 musl package in a separate job:
 
 - skips unchanged upstream SHAs using `state/latest-linux-i686-musl-sha.txt`
 - clones the upstream source at the exact detected SHA
-- does not apply the Windows custom runtime patch
+- applies the shared local-daemon removal patch, without the Windows permission changes
 - cross-builds `codex` for `i686-unknown-linux-musl`
 - packages `codex`, `certs/ca-certificates.crt`, `VERSION.txt`, and Tiny Core copy notes
 - publishes a per-SHA prerelease and refreshes `latest-linux-i686-musl`
@@ -40,6 +40,9 @@ The Windows package includes `codex-code-mode-host.exe` under `codex-resources`,
 
 Patch contract:
 
+- run local interactive, resume and fork sessions with the embedded app server by default
+- disable implicit local daemon attachment, all daemon lifecycle/update commands, and managed daemon worker launch
+- retain explicit remote app-server connections and the foreground app-server protocol
 - force Windows approval policy to `AskForApproval::Never`
 - force Windows runtime permissions to `PermissionProfile::Disabled`
 - clear Windows sandbox mode and network proxy sandbox state
@@ -65,7 +68,41 @@ Manual `workflow_dispatch` runs expose `force`, `upstream_ref`, `run_target`, an
 
 Release publishing is handled by [`scripts/publish-github-release.ps1`](scripts/publish-github-release.ps1) through the GitHub Releases API and the repo-scoped `GITHUB_TOKEN`.
 
-## Windows daemon runtime checks and elevated runners
+## Local daemon removal and runtime checks
+
+[`scripts/patch-codex-no-daemon.py`](scripts/patch-codex-no-daemon.py) is applied
+to both custom targets. Local TUI startup always uses the embedded app server,
+even when `daemon_auto_start` is enabled. Implicit socket discovery returns
+without connecting to an existing daemon. Every public lifecycle and updater
+entry point must retain its first-operation guard; the patch changes that guard
+to reject the operation before it can create state, install a managed package,
+start an updater, or alter an existing daemon. Historical command spellings
+remain parseable and return an explicit disabled diagnostic. The internal
+`--managed-daemon` worker is rejected too. Explicit `--remote` connections and
+foreground `codex app-server` remain available.
+
+The Windows release builds on **`windows-2025`**, and Linux i686 builds on
+**`ubuntu-24.04`**. Windows is built natively with MSVC, not through WSL.
+The release checks all existing Windows permission, OAuth, metadata, debug,
+package and dynamic-tool contracts, then runs the real default TUI in a
+pseudoterminal. A local Responses fixture must receive `hi` and return
+`DAEMON_FREE_HI_OK`, with no daemon state created. This offline fixture is
+distinct from an authenticated live-service smoke test.
+
+```powershell
+python scripts/test-no-daemon-patch.py
+python scripts/test-no-daemon-runtime.py --codex <fresh-codex-binary> --output out/no-daemon-checks.json
+```
+
+Windows interactive testing requires `pywinpty`; Linux uses the standard-library
+PTY implementation. The fixture creates and removes its own isolated home and
+workspace. It never uses the user's credentials.
+
+## Historical daemon fixture
+
+The following checks apply only to the pinned pre-removal CLI fixture. Fresh
+releases pass `--require-no-daemon` and must reject daemon operations at every
+privilege level.
 
 The packaged CLI probe (`scripts/test-windows-cli-runtime.py`) queries the real
 Windows `TOKEN_ELEVATION`, matching the daemon's own security check. GitHub-hosted

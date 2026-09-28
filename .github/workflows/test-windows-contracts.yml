@@ -41,6 +41,8 @@ jobs:
         run: |
           python scripts/test-windows-cli-runtime-contracts.py
           if ($LASTEXITCODE -ne 0) { throw 'Windows CLI runtime probe contracts failed.' }
+          python scripts/test-no-daemon-patch.py
+          if ($LASTEXITCODE -ne 0) { throw 'Local daemon patch contracts failed.' }
 
       - name: Check Out Verified Upstream Packaging Source
         uses: actions/checkout@v6

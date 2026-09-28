@@ -912,6 +912,8 @@ if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
 }
 
 $codexRsDir = Join-Path $sourceDir "codex-rs"
+& python3 (Join-Path $PSScriptRoot 'patch-codex-no-daemon.py') --source-root $sourceDir
+if ($LASTEXITCODE -ne 0) { throw 'Local daemon removal patch failed.' }
 $cliCargoTomlPath = Join-Path $codexRsDir "cli/Cargo.toml"
 # Inspect pristine upstream manifests before target-specific compatibility edits.
 # Those edits intentionally diverge Cargo.toml from Cargo.lock and therefore must
@@ -1165,7 +1167,7 @@ $manifest = [ordered]@{
     generated_at_utc           = $generatedAt
     release_tag                = $releaseTag
     rolling_tag                = $rollingTag
-    custom_runtime_patches     = "not_applied"
+    custom_runtime_patches     = "local_daemon_disabled; Windows permission patches not applied"
     rusty_v8_required_by_codex_cli = [bool]$codexCliUsesRustyV8
     compatibility_patches      = @(
         [ordered]@{

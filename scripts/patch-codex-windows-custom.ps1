@@ -754,4 +754,7 @@ Assert-NotContains -Path $loginServerPath -Needle 'const FALLBACK_PORT: u16 = 0;
 Assert-NotContains -Path $loginServerE2ePath -Needle 'const DEFAULT_LOGIN_PORT: u16 = 16455;' -Description "unregistered login callback test default port"
 Assert-NotContains -Path $loginServerE2ePath -Needle 'const FALLBACK_LOGIN_PORT: u16 = 0;' -Description "unregistered port-zero login callback test fallback"
 
+& python (Join-Path $PSScriptRoot 'patch-codex-no-daemon.py') --source-root $SourceRoot
+if ($LASTEXITCODE -ne 0) { throw 'Local daemon removal patch failed.' }
+
 Write-Host "Windows custom Codex patch verified."
