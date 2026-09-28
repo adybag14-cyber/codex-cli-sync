@@ -84,13 +84,104 @@ def debug_commands(source_root):
     return [re.sub(r"(?<!^)(?=[A-Z])", "-", value).lower() for value in variants]
 
 
+def windows_token_is_elevated():
+    """Query the real process token, not CI environment flags or group names.
+
+    An API failure must fail the probe rather than silently selecting the less
+    privileged branch. TOKEN_ELEVATION is also what the upstream daemon checks.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    if os.name != "nt":
+        raise OSError("The packaged Windows runtime probe requires Windows")
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    advapi.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi.OpenProcessToken.restype = wintypes.BOOL
+    advapi.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID,
+                                          wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    advapi.GetTokenInformation.restype = wintypes.BOOL
+    token = wintypes.HANDLE()
+    if not advapi.OpenProcessToken(kernel.GetCurrentProcess(), 0x0008, ctypes.byref(token)):  # TOKEN_QUERY
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        elevation, returned = wintypes.DWORD(), wintypes.DWORD()
+        if not advapi.GetTokenInformation(token, 20, ctypes.byref(elevation),  # TokenElevation
+                                          ctypes.sizeof(elevation), ctypes.byref(returned)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if returned.value != ctypes.sizeof(elevation):
+            raise OSError("Windows returned an invalid TOKEN_ELEVATION size")
+        return bool(elevation.value)
+    finally:
+        kernel.CloseHandle(token)
+
+
+def check_isolated_daemon(*, config_home, executable, expected_version, elevated, run, run_result):
+    """Check the daemon's contract for this token, always cleaning up our namespace.
+
+    Administrators must be rejected; ordinary users must start the exact packaged
+    binary. Neither branch skips the daemon probe or changes the upstream guard.
+    """
+    checks = []
+    daemon_state = config_home / "app-server-daemon"
+    # Let Codex create its state directory with the required private Windows ACL.
+    initialized = json.loads(run("app-server", "daemon", "stop"))
+    if initialized["status"] != "notRunning":
+        raise AssertionError("A newly created disposable CODEX_HOME unexpectedly had a daemon")
+    (daemon_state / "settings.json").write_text(json.dumps({
+        "remoteControlEnabled": False, "shutdownGraceSeconds": 1,
+        "updater": {"autoUpdateEnabled": False},
+    }), encoding="utf-8")
+    try:
+        if elevated:
+            result = run_result("app-server", "daemon", "start")
+            expected_error = ("start the Windows daemon from a non-elevated terminal; "
+                              "shared clients must not inherit administrator privileges")
+            if result.returncode == 0 or expected_error not in result.stderr:
+                raise AssertionError(
+                    "Elevated daemon launch did not produce the expected security rejection: "
+                    f"exit={result.returncode}, stderr={result.stderr[-2000:]}"
+                )
+            checks.append("isolated_daemon_rejects_elevated_start")
+        else:
+            started = json.loads(run("app-server", "daemon", "start"))
+            if started["status"] != "started" or not started.get("pid"):
+                raise AssertionError(f"Disposable daemon did not start: {started}")
+            managed = Path(started["managedCodexPath"]).resolve()
+            if not managed.is_relative_to(config_home.resolve()):
+                raise AssertionError("Probe daemon package escaped its disposable CODEX_HOME")
+            if hashlib.sha256(managed.read_bytes()).digest() != hashlib.sha256(executable.read_bytes()).digest():
+                raise AssertionError("Daemon did not use the exact packaged CLI binary")
+            running = json.loads(run("app-server", "daemon", "version"))
+            if running["status"] != "running" or running["appServerVersion"] != expected_version:
+                raise AssertionError(f"Probe daemon reports the wrong version: {running}")
+            checks.append("isolated_daemon_starts_exact_packaged_binary")
+    finally:
+        stopped = json.loads(run("app-server", "daemon", "stop"))
+        if stopped["status"] not in {"stopped", "notRunning"}:
+            raise AssertionError(f"Disposable daemon was not stopped: {stopped}")
+        if elevated and stopped["status"] != "notRunning":
+            raise AssertionError("Rejected elevated launch unexpectedly left a running daemon")
+    checks.append("isolated_daemon_remains_stopped" if elevated else "isolated_daemon_stopped")
+    return checks
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--require-visible-debug", action="store_true")
+    parser.add_argument("--require-daemon-lifecycle", action="store_true",
+                        help="Fail unless running non-elevated so full daemon startup/shutdown is exercised")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    elevated = windows_token_is_elevated()
+    if args.require_daemon_lifecycle and elevated:
+        raise AssertionError("Full daemon lifecycle checks require a non-elevated Windows terminal")
     package = args.package.resolve()
     executable = package / "bin/codex.exe"
     metadata = json.loads((package / "codex-package.json").read_text(encoding="utf-8-sig"))
@@ -139,10 +230,13 @@ access = "allow"
 access = "allow"
 ''', encoding="utf-8")
 
-        def run(*arguments):
-            result = subprocess.run([str(executable), *arguments], cwd=workspace, env=env,
+        def run_result(*arguments):
+            return subprocess.run([str(executable), *arguments], cwd=workspace, env=env,
                                     capture_output=True, text=True, encoding="utf-8", timeout=45,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+        def run(*arguments):
+            result = run_result(*arguments)
             if result.returncode:
                 raise AssertionError(f"CLI {arguments!r} failed: {result.stderr[-2000:]}")
             return result.stdout
@@ -212,43 +306,25 @@ access = "allow"
                 checks.append(f"invalid_tool_rejected:{label}")
         finally:
             rpc.close()
-        # Exercise the default daemon package preparation in this disposable CODEX_HOME.
-        # The state/socket namespace is derived from that directory in upstream source.
-        daemon_state = config_home / "app-server-daemon"
-        # Let Codex create its state directory with the required private Windows ACL.
-        initialized = json.loads(run("app-server", "daemon", "stop"))
-        if initialized["status"] != "notRunning":
-            raise AssertionError("A newly created disposable CODEX_HOME unexpectedly had a daemon")
-        (daemon_state / "settings.json").write_text(json.dumps({
-            "remoteControlEnabled": False, "shutdownGraceSeconds": 1,
-            "updater": {"autoUpdateEnabled": False},
-        }), encoding="utf-8")
-        try:
-            started = json.loads(run("app-server", "daemon", "start"))
-            if started["status"] != "started" or not started.get("pid"):
-                raise AssertionError(f"Disposable daemon did not start: {started}")
-            managed = Path(started["managedCodexPath"]).resolve()
-            if not managed.is_relative_to(config_home.resolve()):
-                raise AssertionError("Probe daemon package escaped its disposable CODEX_HOME")
-            if hashlib.sha256(managed.read_bytes()).digest() != hashlib.sha256(executable.read_bytes()).digest():
-                raise AssertionError("Daemon did not use the exact packaged CLI binary")
-            running = json.loads(run("app-server", "daemon", "version"))
-            if running["status"] != "running" or running["appServerVersion"] != metadata["version"]:
-                raise AssertionError(f"Probe daemon reports the wrong version: {running}")
-            checks.append("isolated_daemon_starts_exact_packaged_binary")
-        finally:
-            stopped = json.loads(run("app-server", "daemon", "stop"))
-            if stopped["status"] not in {"stopped", "notRunning"}:
-                raise AssertionError(f"Disposable daemon was not stopped: {stopped}")
-        checks.append("isolated_daemon_stopped")
+        checks.extend(check_isolated_daemon(
+            config_home=config_home, executable=executable, expected_version=metadata["version"],
+            elevated=elevated, run=run, run_result=run_result,
+        ))
     report = {"version": version, "packageLayout": metadata, "debugCommands": commands,
               "debugCommandsRequiredVisible": args.require_visible_debug, "schemaFileCount": len(schema_files),
               "executableSha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
               "passed": len(checks), "checks": checks,
-              "scope": "Offline CLI, schema generation, tool registration, and isolated daemon startup/shutdown. Tool execution round trips are covered by the upstream app-server dynamic_tools test suite."}
+              "daemonProbe": {"tokenElevated": elevated,
+                              "mode": "elevated_rejection" if elevated else "non_elevated_lifecycle",
+                              "lifecycleExercised": not elevated},
+              "scope": ("Offline CLI, schema generation, tool registration, and "
+                        + ("elevated daemon rejection (startup/shutdown is not exercised). " if elevated
+                           else "isolated daemon startup/shutdown. ")
+                        + "Tool execution round trips are covered by the upstream app-server dynamic_tools test suite.")}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"Passed {len(checks)} packaged Windows runtime checks; generated {len(schema_files)} valid JSON schema files.")
+    print(f"Daemon probe: {report['daemonProbe']['mode']}; lifecycleExercised={not elevated}.")
 
 
 if __name__ == "__main__":

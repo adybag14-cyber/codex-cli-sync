@@ -41,6 +41,7 @@ on:
       - scripts/sync-codex-windows-custom.ps1
       - scripts/New-WindowsCodexPackage.ps1
       - scripts/test-windows-cli-runtime.py
+      - scripts/test-windows-cli-runtime-contracts.py
       - tools/CodexSyncDoctor/**
       - README.md
   schedule:
@@ -92,6 +93,12 @@ jobs:
       - name: Test Upstream Compatibility Contracts
         shell: pwsh
         run: ./scripts/test-upstream-compatibility.ps1
+
+      - name: Check Windows CLI Runtime Probe Contracts
+        shell: pwsh
+        run: |
+          python scripts/test-windows-cli-runtime-contracts.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows CLI runtime probe contracts failed.' }
 
       - name: Restore Cargo Cache
         id: cargo-cache-restore

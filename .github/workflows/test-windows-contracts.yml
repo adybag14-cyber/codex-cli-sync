@@ -36,6 +36,12 @@ jobs:
       - name: Check PowerShell Compatibility Contracts
         shell: pwsh
         run: ./scripts/test-upstream-compatibility.ps1
+      - name: Check Windows CLI Runtime Probe Contracts
+        shell: pwsh
+        run: |
+          python scripts/test-windows-cli-runtime-contracts.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows CLI runtime probe contracts failed.' }
+
       - name: Check Out Verified Upstream Packaging Source
         uses: actions/checkout@v6
         with:
@@ -56,3 +62,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Companion build failed.' }
           python scripts/test-sync-doctor.py --doctor out/doctor/codex-sync-doctor.exe --source-root out/contract-upstream
           if ($LASTEXITCODE -ne 0) { throw 'Companion integration tests failed.' }
+      - name: Exercise Real Windows CLI Runtime Fixture
+        shell: pwsh
+        run: ./scripts/test-windows-cli-runtime-fixture.ps1 -SourceRoot out/contract-upstream
+      - name: Upload Runtime Fixture Evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-runtime-fixture-report
+          path: out/runtime-ci-fixture/runtime-checks.json
+          if-no-files-found: warn

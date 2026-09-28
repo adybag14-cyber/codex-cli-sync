@@ -64,3 +64,38 @@ Release layout:
 Manual `workflow_dispatch` runs expose `force`, `upstream_ref`, `run_target`, and `dry_run` inputs. `run_target` can isolate either failing build, while `dry_run` suppresses release/state mutations but still builds and uploads artifacts. The default upstream ref is `main`; OpenAI Codex does not currently publish a `master` branch.
 
 Release publishing is handled by [`scripts/publish-github-release.ps1`](scripts/publish-github-release.ps1) through the GitHub Releases API and the repo-scoped `GITHUB_TOKEN`.
+
+## Windows daemon runtime checks and elevated runners
+
+The packaged CLI probe (`scripts/test-windows-cli-runtime.py`) queries the real
+Windows `TOKEN_ELEVATION`, matching the daemon's own security check. GitHub-hosted
+Windows jobs run as administrators with UAC disabled, so daemon startup must be
+rejected there; a failed launch is only accepted when its error is the exact
+upstream non-elevated-terminal diagnostic and a subsequent stop confirms that no
+daemon is running. Unrelated launch failures and unexpected elevated success
+still fail the release. No application security guard is patched out.
+
+Non-elevated runs continue to exercise startup, managed-package path containment,
+exact executable SHA-256, running version and shutdown. `runtime-checks.json`
+records `daemonProbe.tokenElevated`, `mode` and `lifecycleExercised`, so an elevated
+rejection check is never reported as a successful startup/shutdown test. To
+require full lifecycle coverage, run from a normal (not Administrator) terminal:
+
+```powershell
+python scripts/test-windows-cli-runtime.py --package <package-directory> --source-root <upstream-checkout> --require-visible-debug --require-daemon-lifecycle --output out/runtime-checks-user.json
+```
+
+The probe uses a disposable `CODEX_HOME` without the user's credentials; updater
+and remote control are disabled. Fast regression contracts for both privilege
+branches and token-query failures run before the release build and on pull
+requests:
+
+```powershell
+python scripts/test-windows-cli-runtime-contracts.py
+```
+
+The pull-request workflow also runs the real probe against a SHA-256-pinned
+published Windows CLI fixture, repackaged with the canonical upstream generator.
+Its JSON evidence is uploaded as `windows-runtime-fixture-report`. That historical
+fixture predates visible debug commands, so only the fresh release build requires
+`--require-visible-debug`; the fixture does not replace the release smoke test.
