@@ -57,7 +57,7 @@ def patched_sources(sources):
     before = "        Some(Subcommand::AppServer(app_server_cli)) => {\n            let AppServerCommand {"
     after = ("        Some(Subcommand::AppServer(app_server_cli)) => {\n"
              "            if app_server_cli.managed_daemon {\n"
-             f'                anyhow::bail!("{ERROR}");\n'
+             f'                anyhow::bail!(\n                    "{ERROR}"\n                );\n'
              "            }\n            let AppServerCommand {")
     result[cli] = replace_once(result[cli], before, after, "managed daemon worker")
 
@@ -74,6 +74,9 @@ def patched_sources(sources):
     after = (before + '    if !codex_app_server_daemon::LOCAL_DAEMON_ENABLED {\n'
              '        return None;\n    }\n')
     result[tui] = replace_once(result[tui], before, after, "implicit daemon socket discovery")
+    result[tui] = replace_once(result[tui], "        let expected = Some(socket_path);",
+                               "        let expected: Option<AbsolutePathBuf> = None;",
+                               "existing socket discovery regression expectation")
     return result
 
 

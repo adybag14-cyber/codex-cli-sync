@@ -23,7 +23,8 @@ def fixture():
         'async fn run_interactive_tui() -> std::io::Result<AppExitInfo> {\n    if interactive.no_daemon {\n    }\n}\n'
         '        Some(Subcommand::AppServer(app_server_cli)) => {\n            let AppServerCommand {\n',
         'async fn run_main_inner() -> std::io::Result<AppExitInfo> {\n    if cli.no_daemon && explicit_remote_endpoint.is_some() {\n    }\n}\n',
-        'async fn maybe_probe_default_daemon_socket(codex_home: &Path) -> Option<AbsolutePathBuf> {\n    original().await\n}\n',
+        'async fn maybe_probe_default_daemon_socket(codex_home: &Path) -> Option<AbsolutePathBuf> {\n    original().await\n}\n'
+        '        let expected = Some(socket_path);\n',
     )))
 
 

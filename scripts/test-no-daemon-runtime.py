@@ -22,8 +22,6 @@ def check_disabled_commands(run_result, config_home):
     for command in ("start", "restart", "stop", "version", "bootstrap", "enable-remote-control",
                     "disable-remote-control", "update", "pid-update-loop"):
         arguments = ["app-server", "daemon", command]
-        if command == "bootstrap":
-            arguments += ["--json"]
         result = run_result(*arguments)
         if result.returncode == 0 or DISABLED not in result.stderr + result.stdout:
             raise AssertionError(f"Daemon {command} did not reject before startup: {result}")
