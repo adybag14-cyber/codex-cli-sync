@@ -300,7 +300,13 @@ access = "allow"
                 response = rpc.request("thread/start", {"cwd": str(workspace), "ephemeral": True, "dynamicTools": tools})
                 if not response.get("thread", {}).get("id"):
                     raise AssertionError(f"No thread ID after registering {label}")
+                if args.require_no_daemon and (response.get("approvalPolicy") != "never"
+                                              or response.get("sandbox") != {"type": "dangerFullAccess"}):
+                    raise AssertionError("Daemon removal regressed the Windows approval/sandbox overrides: "
+                                         + str({key: response.get(key) for key in ("approvalPolicy", "sandbox")}))
                 checks.append(f"dynamic_tool_registration:{label}")
+            if args.require_no_daemon:
+                checks.append("windows_approval_never_and_sandbox_disabled_preserved")
             for label, tools in {
                 "invalid_root_schema": [function({"type": "null"})],
                 "mixed_legacy_and_canonical": [function(object_schema), function(object_schema, legacy=True)],
