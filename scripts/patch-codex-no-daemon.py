@@ -41,7 +41,7 @@ def patched_sources(sources):
     before = '#[cfg(any(unix, windows))]\nfn ensure_supported_platform() -> Result<()> {\n    Ok(())\n}'
     after = (f'/// Whether this build supports a shared local daemon.\n{CONSTANT}\n\n'
              '#[cfg(any(unix, windows))]\nfn ensure_supported_platform() -> Result<()> {\n'
-             f'    Err(anyhow!("{ERROR}"))\n}}')
+             f'    Err(anyhow!(\n        "{ERROR}"\n    ))\n}}')
     result[daemon] = replace_once(result[daemon], before, after, "daemon lifecycle guard")
 
     cli = "codex-rs/cli/src/main.rs"
