@@ -143,7 +143,7 @@ function Set-PackageJsonVersionIfPresent {
 
 function New-CustomVersion {
     $stamp = [DateTime]::UtcNow.ToString("yyyyMMddHHmm")
-    return "0.0.0-custom.$stamp"
+    return "0.159.0-$stamp"
 }
 
 function Get-FileSha256 {

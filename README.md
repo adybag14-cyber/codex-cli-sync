@@ -7,7 +7,7 @@ The scheduled workflow:
 - checks `openai/codex` every four hours for changes on `main`
 - skips unchanged upstream SHAs using `state/latest-custom-main-sha.txt`
 - clones the upstream source at the exact detected SHA
-- rewrites the workspace version to a custom CI version
+- rewrites the workspace version to `0.159.0-<UTC timestamp>` using `yyyyMMddHHmm`, so model catalog requests advertise the compatible client version `0.159.0`
 - applies the repo-owned Windows custom patch
 - compiles `codex.exe`, `codex-command-runner.exe`, `codex-windows-sandbox-setup.exe`, and `codex-code-mode-host.exe`
 - packages those binaries with `rg.exe` and `VERSION.txt`

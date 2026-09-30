@@ -26,6 +26,15 @@ foreach ($functionName in @('Ensure-RustCrateRecursionLimit', 'Enable-I686MuslLi
     . ([ScriptBlock]::Create($definition.Extent.Text))
 }
 
+$windowsSyncAst = [Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $PSScriptRoot "sync-codex-windows-custom.ps1"), [ref]$patchTokens, [ref]$patchErrors)
+if ($patchErrors.Count) { throw "Windows sync script has syntax errors: $patchErrors" }
+foreach ($functionName in @('New-CustomVersion', 'Set-CargoWorkspaceVersion', 'Set-PackageJsonVersionIfPresent')) {
+    $definition = $windowsSyncAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
+    if (-not $definition) { throw "Missing Windows sync function $functionName" }
+    . ([ScriptBlock]::Create($definition.Extent.Text))
+}
+
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("codex-upstream-contract-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 $testCount = 0
@@ -54,6 +63,37 @@ function Assert-Rejected {
 }
 
 try {
+    $beforeStamp = [DateTime]::UtcNow.ToString('yyyyMMddHHmm')
+    $customVersion = New-CustomVersion
+    $afterStamp = [DateTime]::UtcNow.ToString('yyyyMMddHHmm')
+    if ($customVersion -notmatch '^0\.159\.0-(?<stamp>\d{12})$' -or $Matches.stamp -notin @($beforeStamp, $afterStamp)) {
+        throw "Custom version must use 0.159.0-<UTC timestamp>; got '$customVersion'"
+    }
+    $testCount++
+    $semanticVersion = [Management.Automation.SemanticVersion]::Parse($customVersion)
+    $catalogClientVersion = '{0}.{1}.{2}' -f $semanticVersion.Major, $semanticVersion.Minor, $semanticVersion.Patch
+    if ($catalogClientVersion -ne '0.159.0') {
+        throw "Custom version would advertise incompatible model catalog client version '$catalogClientVersion'"
+    }
+    $testCount++
+    $root = New-Layout -Name 'custom-version' -Files @{
+        'Cargo.toml' = "[workspace.package]`nversion = `"0.0.0`"`nedition = `"2024`"`n`n[package]`nname = `"fixture`"`nversion = `"9.8.7`"`n"
+        'package.json' = "{`n  `"name`": `"fixture`",`n  `"version`": `"0.0.0`"`n}`n"
+    }
+    $cargoPath = Join-Path $root 'Cargo.toml'
+    Set-CargoWorkspaceVersion -CargoTomlPath $cargoPath -Version $customVersion
+    $cargoText = [IO.File]::ReadAllText($cargoPath)
+    if (-not $cargoText.Contains("version = `"$customVersion`"") -or -not $cargoText.Contains('version = "9.8.7"')) {
+        throw 'Custom Cargo workspace version was not propagated while preserving the unrelated package version'
+    }
+    $testCount++
+    $packagePath = Join-Path $root 'package.json'
+    Set-PackageJsonVersionIfPresent -PackageJsonPath $packagePath -Version $customVersion
+    $package = [IO.File]::ReadAllText($packagePath) | ConvertFrom-Json
+    if ($package.version -ne $customVersion -or $package.name -ne 'fixture') {
+        throw 'Custom package.json version was not propagated while preserving the package name'
+    }
+    $testCount++
     foreach ($newline in @("`n", "`r`n")) {
         $fixture = @'
 #[clap(hide = true)]
