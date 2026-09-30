@@ -1,17 +1,17 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "bcd6d9ab6b9f26f85d76d0c680b3f88b367bffa0",
-  "custom_version": "0.0.0-custom.202609300534",
+  "upstream_sha": "67727e7cf114cf3e1b71db368d74b24e32f6cb12",
+  "custom_version": "0.0.0-custom.202609301502",
   "windows_target": "x86_64-pc-windows-msvc",
-  "generated_at_utc": "2026-09-30T05:34:30.5596820Z",
-  "release_tag": "custom-windows-x64-bcd6d9ab6b9f",
+  "generated_at_utc": "2026-09-30T15:02:23.0813835Z",
+  "release_tag": "custom-windows-x64-67727e7cf114",
   "rolling_tag": "latest-windows-x64-custom",
   "patch_status": "applied",
   "custom_patches_failed": false,
   "artifact": {
-    "name": "codex-windows-x64-custom-bcd6d9ab6b9f.zip",
-    "sha256": "4b02991d1d6882c13c4af09df28cdd60f9b51df8c89e1fa3bade967ed6f81afa"
+    "name": "codex-windows-x64-custom-67727e7cf114.zip",
+    "sha256": "4c94ef517d0465fc59807d1150e69a1ca8c7d5647edbeb059c62ac42bdaedb49"
   },
   "patch_contract": {
     "local_daemon": "Disabled: embedded local TUI, no implicit attachment, lifecycle and updater rejected",
@@ -40,11 +40,11 @@
   },
   "release_files": [
     {
-      "name": "codex-windows-x64-custom-bcd6d9ab6b9f.zip",
-      "sha256": "4b02991d1d6882c13c4af09df28cdd60f9b51df8c89e1fa3bade967ed6f81afa"
+      "name": "codex-windows-x64-custom-67727e7cf114.zip",
+      "sha256": "4c94ef517d0465fc59807d1150e69a1ca8c7d5647edbeb059c62ac42bdaedb49"
     },
     {
-      "name": "codex-windows-x64-custom-bcd6d9ab6b9f.manifest.json",
+      "name": "codex-windows-x64-custom-67727e7cf114.manifest.json",
       "sha256": null
     },
     {
