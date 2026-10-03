@@ -225,12 +225,23 @@ function Insert-AfterOnce {
 function Set-WindowsToolPermissionsBypass {
     param([Parameter(Mandatory = $true)][string]$Path)
 
-    Insert-AfterOnce -Path $Path `
-        -Pattern 'pub\(super\) async fn apply_granted_turn_permissions\(\s*session: &Session,\s*(?:(?:environment_id: &str|environment: &TurnEnvironment),\s*)?cwd: &(?:std::path::)?Path(?:Uri)?,\s*sandbox_permissions: SandboxPermissions,\s*additional_permissions: Option<AdditionalPermissionProfile>,\s*\) -> EffectiveAdditionalPermissions \{\r?\n' `
-        -Insertion @'
+    # Upstream moved authority from Session to StepContext and made this pure
+    # evaluator synchronous. Keep explicit layouts rather than accepting an
+    # arbitrary signature that might no longer govern production permissions.
+    $text = Get-Text -Path $Path
+    $legacy = 'pub\(super\) async fn apply_granted_turn_permissions\(\s*session: &Session,\s*(?:(?:environment_id: &str|environment: &TurnEnvironment),\s*)?cwd: &(?:std::path::)?Path(?:Uri)?,\s*sandbox_permissions: SandboxPermissions,\s*additional_permissions: Option<AdditionalPermissionProfile>,\s*\) -> EffectiveAdditionalPermissions \{\r?\n'
+    $current = 'pub\(super\) fn apply_granted_turn_permissions\(\s*step_context: &StepContext,\s*environment: &TurnEnvironment,\s*cwd: &PathUri,\s*sandbox_permissions: SandboxPermissions,\s*additional_permissions: Option<AdditionalPermissionProfile>,\s*\) -> EffectiveAdditionalPermissions \{\r?\n'
+    $pattern = '(?:' + $legacy + '|' + $current + ')'
+    $matches = [regex]::Matches($text, $pattern)
+    if ($matches.Count -ne 1 -or [regex]::Matches($text, 'fn apply_granted_turn_permissions\(').Count -ne 1) {
+        throw "Unsupported tool-permissions evaluator in ${Path}: expected exactly one reviewed signature."
+    }
+    $authority = if ($matches[0].Value.Contains('step_context:')) { 'step_context' } else { 'session' }
+    $insertion = @'
+    // codex-cli-sync: ignore tool sandbox escalation metadata on Windows.
     if cfg!(target_os = "windows") {
         let _ = (
-            session,
+            AUTHORITY,
             &sandbox_permissions,
             additional_permissions.as_ref(),
         );
@@ -241,7 +252,17 @@ function Set-WindowsToolPermissionsBypass {
         };
     }
 
-'@ -Description "ignore tool sandbox escalation metadata on Windows"
+'@.Replace('AUTHORITY', $authority)
+    $remaining = $text.Substring($matches[0].Index + $matches[0].Length)
+    if ($remaining.StartsWith($insertion, [StringComparison]::Ordinal)) {
+        Write-Host 'Kept: Windows tool-permissions bypass'
+        return
+    }
+    if ($text.Contains('// codex-cli-sync: ignore tool sandbox escalation metadata on Windows.')) {
+        throw 'Tool-permissions bypass marker exists outside the reviewed function entry.'
+    }
+    Insert-AfterOnce -Path $Path `
+        -Pattern $pattern -Insertion $insertion -Description "ignore tool sandbox escalation metadata on Windows"
 }
 
 function Set-WindowsExecPolicyBypass {

@@ -141,10 +141,7 @@ function Set-PackageJsonVersionIfPresent {
     [System.IO.File]::WriteAllText($PackageJsonPath, $updated, [System.Text.UTF8Encoding]::new($false))
 }
 
-function New-CustomVersion {
-    $stamp = [DateTime]::UtcNow.ToString("yyyyMMddHHmm")
-    return "0.159.0-$stamp"
-}
+. (Join-Path $PSScriptRoot 'Resolve-CodexCustomVersion.ps1')
 
 function Get-FileSha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -322,7 +319,6 @@ $sourceDir = Join-Path $WorkspaceDir "codex-upstream"
 $remoteUrl = "https://github.com/$UpstreamRepo.git"
 $upstreamSha = Get-UpstreamHead -Repo $UpstreamRepo -Ref $UpstreamRef
 $upstreamShortSha = $upstreamSha.Substring(0, 12)
-$customVersion = New-CustomVersion
 $releaseTag = "custom-windows-x64-$upstreamShortSha"
 $rollingTag = "latest-windows-x64-custom"
 $releaseWorkspace = Join-Path $WorkspaceDir "custom-$upstreamShortSha"
@@ -336,7 +332,7 @@ Write-ActionOutput -Name "upstream_repo" -Value $UpstreamRepo
 Write-ActionOutput -Name "upstream_ref" -Value $UpstreamRef
 Write-ActionOutput -Name "upstream_sha" -Value $upstreamSha
 Write-ActionOutput -Name "upstream_short_sha" -Value $upstreamShortSha
-Write-ActionOutput -Name "custom_version" -Value $customVersion
+Write-ActionOutput -Name "custom_version" -Value ""
 Write-ActionOutput -Name "release_tag" -Value $releaseTag
 Write-ActionOutput -Name "rolling_tag" -Value $rollingTag
 Write-ActionOutput -Name "generated_at" -Value $generatedAt
@@ -370,6 +366,11 @@ if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
     Initialize-UpstreamCheckout -SourceDir $sourceDir -RemoteUrl $remoteUrl -Commit $upstreamSha
 }
 
+$versionResolution = Resolve-CodexCustomVersion -CargoTomlPath (Join-Path $sourceDir 'codex-rs\Cargo.toml') `
+    -UpstreamRef $UpstreamRef -RemoteUrl $remoteUrl
+$customVersion = $versionResolution.custom_version
+Write-Host "Custom version $customVersion resolved from $($versionResolution.source); stable tag: $($versionResolution.latest_stable_tag)."
+Write-ActionOutput -Name "custom_version" -Value $customVersion
 Set-CargoWorkspaceVersion -CargoTomlPath (Join-Path $sourceDir "codex-rs\Cargo.toml") -Version $customVersion
 Set-PackageJsonVersionIfPresent -PackageJsonPath (Join-Path $sourceDir "codex-cli\package.json") -Version $customVersion
 
@@ -387,6 +388,7 @@ try {
         upstream_ref           = $UpstreamRef
         upstream_sha           = $upstreamSha
         custom_version         = $customVersion
+        version_resolution     = $versionResolution
         windows_target         = $WindowsTarget
         generated_at_utc       = $generatedAt
         release_tag            = $releaseTag
@@ -564,6 +566,7 @@ $manifest = [ordered]@{
     upstream_ref       = $UpstreamRef
     upstream_sha       = $upstreamSha
     custom_version     = $customVersion
+    version_resolution = $versionResolution
     windows_target     = $WindowsTarget
     generated_at_utc   = $generatedAt
     release_tag        = $releaseTag

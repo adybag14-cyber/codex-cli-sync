@@ -7,7 +7,7 @@ The scheduled workflow:
 - checks `openai/codex` every four hours for changes on `main`
 - skips unchanged upstream SHAs using `state/latest-custom-main-sha.txt`
 - clones the upstream source at the exact detected SHA
-- rewrites the workspace version to `0.159.0-<UTC timestamp>` using `yyyyMMddHHmm`, so model catalog requests advertise the compatible client version `0.159.0`
+- discovers the next upstream stable version base automatically and rewrites the workspace version to `<base>-<UTC timestamp>` using `yyyyMMddHHmm`, so model catalog requests advertise that version base
 - applies the repo-owned Windows custom patch
 - compiles `codex.exe`, `codex-command-runner.exe`, `codex-windows-sandbox-setup.exe`, and `codex-code-mode-host.exe`
 - packages those binaries with `rg.exe` and `VERSION.txt`
@@ -29,7 +29,7 @@ The i686 musl package keeps target-specific compatibility adjustments: it enable
 The Windows custom patch is maintained in [`scripts/patch-codex-windows-custom.ps1`](scripts/patch-codex-windows-custom.ps1). If an upstream source anchor moves, the workflow publishes a release card and manifest that explicitly say `CUSTOM PATCHES FAILED`, uploads no Codex binary for that run, and does not advance the successful upstream state.
 For Rust config construction, the patcher prefers named/shorthand struct-field rewriting over one large text anchor so normal upstream refactors can move or reformat surrounding code without losing the required Windows behavior.
 Both targets resolve the historical `codex-mcp-server` recursion workaround from the checked-out source. They skip it only when the crate directory and its workspace, CLI and lockfile references have all disappeared upstream. Missing files in a retained or still-declared crate fail closed. `scripts/test-upstream-compatibility.ps1` checks legacy, fully removed and incomplete layouts on both runners; Linux manifests record an absent crate as not applicable rather than claiming it was patched.
-The Windows tool-permissions patch supports both the legacy environment-ID/Path signature and the newer TurnEnvironment/PathUri signature. The exec-policy patch targets the shared production parsed-command evaluator after upstream moved the old command method behind `cfg(test)`; regression fixtures ensure a test-only wrapper cannot satisfy the production patch contract.
+The Windows tool-permissions patch supports the legacy asynchronous Session signatures and the synchronous StepContext/TurnEnvironment/PathUri evaluator. It preserves the original evaluator for other platforms and rejects unknown, duplicated, or misplaced patch entries before modifying that file. The exec-policy patch targets the shared production parsed-command evaluator after upstream moved the old command method behind `cfg(test)`; regression fixtures ensure a test-only wrapper cannot satisfy the production patch contract.
 The Linux TUI and exec crates also use a minimum recursion limit of 256 for the embedded app-server request future. This matches the existing Windows build adjustments, preserves higher upstream limits, and is checked for repeatability in the compatibility tests.
 Linux sandbox socket syscall keys are widened independently of their rule payloads, so new modes such as upstream's AF_VSOCK restriction retain their rules and compile on i686 musl. Compatibility fixtures cover legacy and VSOCK rules, multiline calls, existing conversions, and rejection of unsupported source layouts before writing changes.
 Fresh runner checkouts preserve restored `codex-rs/target` caches. The bootstrap accepts only an empty directory or that cache-only layout, initializes Git there, and fetches/checks out the exact upstream commit; unexpected existing files are rejected instead of deleted. Local Git fixtures verify both source provenance and preservation of a cached sentinel on both runner platforms.
@@ -67,6 +67,42 @@ Release layout:
 Manual `workflow_dispatch` runs expose `force`, `upstream_ref`, `run_target`, and `dry_run` inputs. `run_target` can isolate either failing build, while `dry_run` suppresses release/state mutations but still builds and uploads artifacts. The default upstream ref is `main`; OpenAI Codex does not currently publish a `master` branch.
 
 Release publishing is handled by [`scripts/publish-github-release.ps1`](scripts/publish-github-release.ps1) through the GitHub Releases API and the repo-scoped `GITHUB_TOKEN`.
+
+## Automatic Windows custom version
+
+[`scripts/Resolve-CodexCustomVersion.ps1`](scripts/Resolve-CodexCustomVersion.ps1)
+reads the exact checkout before any version mutation. An explicit `rust-v` tag
+(including alpha/RC tags) supplies its version base. Otherwise, a non-placeholder
+Cargo workspace version supplies the base. Conflicting tag and workspace bases
+fail the run.
+
+For development sources whose workspace declares `0.0.0`, the resolver queries
+the configured upstream remote for stable `rust-vMAJOR.MINOR.PATCH` tags, sorts
+them numerically, and uses the next minor version with patch zero. Thus stable
+`0.159.0` leads to `0.160.0-<timestamp>`; stable `0.160.2` leads to
+`0.161.0-<timestamp>`; stable `1.0.0` leads to `1.1.0-<timestamp>`. Prereleases,
+peeled annotated-tag rows, build metadata, unrelated tags, and historical
+`0.0.<timestamp>` development tags cannot become the stable baseline. Discovery
+errors, an empty stable-tag set, malformed workspace versions, and numeric
+overflow stop the run instead of falling back to a stale hard-coded version.
+The inferred next minor is a development version convention; a future major
+release is taken from an explicit upstream version, not guessed.
+
+The UTC timestamp remains twelve digits, preserving existing installer and
+SemVer consumers. Both success and patch-failure manifests record the discovery
+source, baseline stable tag, original workspace version, ref, and UTC time in
+`version_resolution`. The highest stable tag can advance between builds of the
+same placeholder source; the manifest records the baseline used for each build.
+Unchanged source SHAs still skip normally; use `force` when rebuilding the same
+SHA after a version-baseline or patch change.
+
+The Windows compatibility workflow exercises the complete patch against the
+historical supported source, the first failing source, the reviewed current
+source, and live upstream `main`, on pull requests and every four hours. It
+records the exact checked-out SHA and version decision. Reviewed snapshots keep
+regressions reproducible while the live check exposes future drift. Unknown
+source layouts still fail closed; passing source contracts does not replace
+the native release build and packaged CLI runtime gates.
 
 ## Local daemon removal and runtime checks
 
