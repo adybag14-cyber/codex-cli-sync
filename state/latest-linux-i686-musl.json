@@ -3,7 +3,7 @@
   "upstream_ref": "main",
   "upstream_sha": "b741e480e203f037ca726bc2a76d99a8e8668e66",
   "linux_target": "i686-unknown-linux-musl",
-  "generated_at_utc": "2026-10-03T13:28:01.3168379Z",
+  "generated_at_utc": "2026-10-03T16:42:30.4531778Z",
   "release_tag": "linux-i686-musl-b741e480e203",
   "rolling_tag": "latest-linux-i686-musl",
   "custom_runtime_patches": "local_daemon_disabled; Windows permission patches not applied",
@@ -109,12 +109,12 @@
   },
   "artifact": {
     "name": "codex-linux-i686-musl-b741e480e203.tar.gz",
-    "sha256": "54ae8345b748b6060085f0872a47fbc8c24c71fa83339c90bf27156b8551e5d4"
+    "sha256": "6afb3ba5b2c61b2914325899d7de1588f1ec958b624f06ffa0c23218bbeaa198"
   },
   "packaged_files": [
     {
       "path": "codex",
-      "sha256": "127a57cb3d1809a59955c9b05c4764028926fc3efa23474110d9341030e2bfae"
+      "sha256": "dcac39e11f35f1929b686ceff1df47dc0dc3f7eaf2fc1b847bd050e9eaec7fae"
     },
     {
       "path": "certs/ca-certificates.crt",
@@ -132,7 +132,7 @@
   "release_files": [
     {
       "name": "codex-linux-i686-musl-b741e480e203.tar.gz",
-      "sha256": "54ae8345b748b6060085f0872a47fbc8c24c71fa83339c90bf27156b8551e5d4"
+      "sha256": "6afb3ba5b2c61b2914325899d7de1588f1ec958b624f06ffa0c23218bbeaa198"
     },
     {
       "name": "codex-linux-i686-musl-b741e480e203.manifest.json",
