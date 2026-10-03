@@ -57,6 +57,9 @@ jobs:
           git -C out/contract-upstream diff --check
           if ($LASTEXITCODE -ne 0) { throw 'Upstream patch has whitespace errors.' }
           git -C out/contract-upstream rev-parse HEAD | Set-Content out/upstream-sha.txt
+          python scripts/test-windows-source-transaction.py --source-root out/contract-upstream
+          if ($LASTEXITCODE -ne 0) { throw 'Full Windows source transaction contracts failed.' }
+          ./scripts/test-windows-package-contracts.ps1 -SourceRoot out/contract-upstream
       - name: Retain Exact Upstream Version Evidence
         if: always()
         uses: actions/upload-artifact@v7

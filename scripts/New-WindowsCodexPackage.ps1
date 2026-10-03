@@ -40,5 +40,20 @@ function New-WindowsCodexPackage {
         $manifest.resourcesDir -ne 'codex-resources' -or $manifest.pathDir -ne 'codex-path') {
         throw 'Upstream package layout changed; review installer and smoke-test compatibility before publishing.'
     }
+    $inputs = @{
+        'bin/codex.exe' = (Join-Path $BinaryDir 'codex.exe')
+        'bin/codex-code-mode-host.exe' = (Join-Path $BinaryDir 'codex-code-mode-host.exe')
+        'codex-resources/codex-command-runner.exe' = (Join-Path $BinaryDir 'codex-command-runner.exe')
+        'codex-resources/codex-windows-sandbox-setup.exe' = (Join-Path $BinaryDir 'codex-windows-sandbox-setup.exe')
+        'codex-path/rg.exe' = $RipgrepPath
+    }
+    foreach ($relative in $inputs.Keys) {
+        $packaged = Join-Path $Destination $relative
+        if (-not (Test-Path -LiteralPath $packaged -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $packaged -Algorithm SHA256).Hash -cne
+            (Get-FileHash -LiteralPath $inputs[$relative] -Algorithm SHA256).Hash) {
+            throw "Upstream package builder changed the required binary or its path: $relative"
+        }
+    }
     return $manifest
 }

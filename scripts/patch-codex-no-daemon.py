@@ -13,6 +13,16 @@ import re
 ERROR = "The local daemon is disabled in this custom build; run codex directly."
 MARKER = "// codex-cli-sync: local sessions use the embedded app server."
 CONSTANT = "pub const LOCAL_DAEMON_ENABLED: bool = false;"
+PUBLIC_EXPORTS = {
+    "pubusebackend::windows::DetachedLaunchRestricted;",
+    "pubuselaunch::restart_with_features;",
+    "pubuselaunch::start_with_features;",
+    "pubuseprepare_install::InstallRequest;",
+    "pubuseprepare_install::update_from_cli;",
+    "pubmodtelemetry;",
+    "pubusebackend::BackendKind;",
+}
+OPTIONAL_PUBLIC_EXPORTS = {"pubusebackend::windows::is_elevated;"}
 
 
 def replace_once(text, before, after, description):
@@ -32,6 +42,11 @@ def check_entry_guard(text, name):
 def patched_sources(sources):
     result = dict(sources)
     daemon = "codex-rs/app-server-daemon/src/lib.rs"
+    exports = re.findall(r"^\s*pub\s+(?:use|mod)\b[^;]*;", sources[daemon], re.M)
+    normalized = [re.sub(r"\s+", "", item) for item in exports]
+    if (set(normalized) - OPTIONAL_PUBLIC_EXPORTS != PUBLIC_EXPORTS
+            or len(normalized) != len(set(normalized))):
+        raise ValueError("Daemon public exports changed; review new modules and re-exported entry points")
     public_entries = {
         daemon: {"probe_app_server_version", "run", "bootstrap", "ensure_remote_control_ready",
                  "enable_remote_control_on_socket", "start_remote_control_pairing", "set_remote_control",
@@ -40,8 +55,9 @@ def patched_sources(sources):
         "codex-rs/app-server-daemon/src/prepare_install.rs": {"update_from_cli"},
     }
     for path, expected in public_entries.items():
-        found = set(re.findall(r"^pub (?:async )?fn ([a-z_]+)\(", sources[path], re.M))
-        if found != expected:
+        entries = re.findall(r"^[ \t]*pub (?:async )?fn ([a-z_]+)\(", sources[path], re.M)
+        found = set(entries)
+        if found != expected or len(entries) != len(expected):
             raise ValueError(f"Daemon public entry points changed in {path}: {sorted(found ^ expected)}")
     for name in ("run", "bootstrap", "ensure_remote_control_ready", "enable_remote_control_on_socket",
                  "start_remote_control_pairing", "set_remote_control", "run_pid_update_loop", "update"):
