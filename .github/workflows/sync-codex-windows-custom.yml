@@ -39,6 +39,12 @@ on:
       - scripts/Resolve-UpstreamMcpServer.ps1
       - scripts/Initialize-UpstreamCheckout.ps1
       - scripts/Resolve-CodexCustomVersion.ps1
+      - scripts/Invoke-SourcePatchTransaction.ps1
+      - scripts/Invoke-CargoContractTest.ps1
+      - scripts/Read-ArtifactChecksums.ps1
+      - scripts/Test-WindowsBuildState.ps1
+      - scripts/test-windows-source-transaction.py
+      - scripts/test-windows-package-contracts.ps1
       - scripts/test-upstream-compatibility.ps1
       - scripts/publish-github-release.ps1
       - scripts/sync-codex-linux-i686-musl.ps1

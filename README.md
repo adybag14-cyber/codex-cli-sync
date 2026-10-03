@@ -5,7 +5,7 @@ This repository builds Codex CLI release artifacts from upstream OpenAI Codex so
 The scheduled workflow:
 
 - checks `openai/codex` every four hours for changes on `main`
-- skips unchanged upstream SHAs using `state/latest-custom-main-sha.txt`
+- skips only a matching successful source SHA, version base, target, and build-recipe fingerprint using the Windows state files
 - clones the upstream source at the exact detected SHA
 - discovers the next upstream stable version base automatically and rewrites the workspace version to `<base>-<UTC timestamp>` using `yyyyMMddHHmm`, so model catalog requests advertise that version base
 - applies the repo-owned Windows custom patch
@@ -93,8 +93,10 @@ SemVer consumers. Both success and patch-failure manifests record the discovery
 source, baseline stable tag, original workspace version, ref, and UTC time in
 `version_resolution`. The highest stable tag can advance between builds of the
 same placeholder source; the manifest records the baseline used for each build.
-Unchanged source SHAs still skip normally; use `force` when rebuilding the same
-SHA after a version-baseline or patch change.
+An unchanged source SHA skips only when the version base, target, and build-recipe
+fingerprint also match a successful stored build. A new stable baseline or a
+changed patch/package/runtime recipe therefore triggers a rebuild automatically.
+Use `force` to rebuild an otherwise identical successful build.
 
 The Windows compatibility workflow exercises the complete patch against the
 historical supported source, the first failing source, the reviewed current
@@ -103,6 +105,15 @@ records the exact checked-out SHA and version decision. Reviewed snapshots keep
 regressions reproducible while the live check exposes future drift. Unknown
 source layouts still fail closed; passing source contracts does not replace
 the native release build and packaged CLI runtime gates.
+
+The broader [Windows upstream contract audit](docs/windows-upstream-contract-audit.md)
+documents each patch boundary, the changes it handles, its evidence, and the
+changes that require review. The full Windows patch is planned against staged
+source and committed only after every patch check passes. Native Cargo contract
+tests must select and execute real tests; zero-test or ignored-test success is
+rejected. Required package binaries are checked against their build-input hashes,
+and expanded V8 checksum manifests remain valid only when the required artifacts
+have unique verified entries.
 
 ## Local daemon removal and runtime checks
 

@@ -6,6 +6,10 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Resolve-UpstreamMcpServer.ps1")
 . (Join-Path $PSScriptRoot "Initialize-UpstreamCheckout.ps1")
 . (Join-Path $PSScriptRoot 'Resolve-CodexCustomVersion.ps1')
+. (Join-Path $PSScriptRoot 'Invoke-SourcePatchTransaction.ps1')
+. (Join-Path $PSScriptRoot 'Invoke-CargoContractTest.ps1')
+. (Join-Path $PSScriptRoot 'Read-ArtifactChecksums.ps1')
+. (Join-Path $PSScriptRoot 'Test-WindowsBuildState.ps1')
 
 # Import only the pure patch functions, not the patcher's main source mutation.
 $patchTokens = $null
@@ -13,7 +17,7 @@ $patchErrors = $null
 $patchAst = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot "patch-codex-windows-custom.ps1"), [ref]$patchTokens, [ref]$patchErrors)
 if ($patchErrors.Count) { throw "Windows patcher has syntax errors: $patchErrors" }
-foreach ($functionName in @('Get-Text', 'Set-Text', 'Insert-AfterOnce', 'Set-WindowsToolPermissionsBypass', 'Set-WindowsExecPolicyBypass', 'Disable-WindowsSandboxStartupNux', 'Show-WindowsDebugCommands')) {
+foreach ($functionName in @('Get-Text', 'Set-Text', 'Insert-AfterOnce', 'Set-WindowsToolPermissionsBypass', 'Set-WindowsExecPolicyBypass', 'Disable-WindowsSandboxStartupNux', 'Show-WindowsDebugCommands', 'Assert-RustCrateRecursionLimit', 'Set-ConfigPermissionsForWindowsCustom')) {
     $definition = $patchAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
     if (-not $definition) { throw "Missing patch function $functionName" }
     . ([ScriptBlock]::Create($definition.Extent.Text))
@@ -64,6 +68,164 @@ function Assert-Rejected {
 }
 
 try {
+    $root = New-Layout -Name 'recipe-fingerprint' -Files @{
+        'scripts/patch.ps1' = 'source patch'
+        '.github/workflows/sync-codex-windows-custom.yml' = 'recipe'
+        'tools/CodexSyncDoctor/Program.cs' = 'companion'
+        'tools/CodexSyncDoctor/obj/generated.cs' = 'generated-ignored'
+    }
+    $fingerprint = Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root
+    if ($fingerprint -notmatch '^[0-9a-f]{64}$') { throw 'Invalid recipe fingerprint' }
+    [IO.File]::WriteAllText((Join-Path $root 'tools/CodexSyncDoctor/obj/generated.cs'), 'different ignored output')
+    if ((Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root) -ne $fingerprint) { throw 'Build output incorrectly affected recipe identity' }
+    $testCount++
+    [IO.File]::WriteAllText((Join-Path $root 'scripts/patch.ps1'), 'new patch')
+    if ((Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root) -eq $fingerprint) { throw 'Source patch change did not invalidate build state' }
+    $testCount++
+    $stateArgs = @{ StoredSha = 'abc'; UpstreamSha = 'abc'; UpstreamRepo = 'openai/codex'; UpstreamRef = 'main'; BaseVersion = '0.161.0'; Target = 'x86_64-pc-windows-msvc'; RecipeFingerprint = $fingerprint }
+    $state = [pscustomobject]@{ upstream_sha = 'abc'; upstream_repo = 'openai/codex'; upstream_ref = 'main'; windows_target = 'x86_64-pc-windows-msvc'; patch_status = 'applied'; custom_patches_failed = $false; version_resolution = [pscustomobject]@{ base_version = '0.161.0' }; build_recipe_sha256 = $fingerprint }
+    if (-not (Test-WindowsBuildStateCurrent -State $state @stateArgs)) { throw 'Matching successful recipe was not recognized' }
+    $testCount++
+    foreach ($field in @('upstream_sha', 'upstream_repo', 'upstream_ref', 'windows_target', 'patch_status', 'custom_patches_failed', 'version_resolution', 'build_recipe_sha256')) {
+        $changed = $state | ConvertTo-Json | ConvertFrom-Json
+        if ($field -eq 'version_resolution') { $changed.version_resolution.base_version = '0.162.0' }
+        elseif ($field -eq 'custom_patches_failed') { $changed.custom_patches_failed = $true }
+        else { $changed.$field = 'changed' }
+        if (Test-WindowsBuildStateCurrent -State $changed @stateArgs) { throw "Changed $field incorrectly skipped a rebuild" }
+        $testCount++
+    }
+    foreach ($oldState in @($null, [pscustomobject]@{ upstream_sha = 'abc' }, [pscustomobject]@{ version_resolution = $null })) {
+        if (Test-WindowsBuildStateCurrent -State $oldState @stateArgs) { throw 'Incomplete historical state incorrectly skipped a rebuild' }
+        $testCount++
+    }
+    $stateArgs.StoredSha = 'out-of-date-sha-file'
+    if (Test-WindowsBuildStateCurrent -State $state @stateArgs) { throw 'Inconsistent state files incorrectly skipped a rebuild' }
+    $testCount++
+    foreach ($value in @(256, 512, 1024)) {
+        $root = New-Layout -Name ("recursion-verification-" + $value) -Files @{ 'lib.rs' = "#![recursion_limit = `"$value`"]`n" }
+        Assert-RustCrateRecursionLimit -Path (Join-Path $root 'lib.rs')
+        $testCount++
+    }
+    foreach ($text in @('', "#![recursion_limit = `"128`"]`n", "#![recursion_limit = `"256`"]`n#![recursion_limit = `"512`"]`n")) {
+        $root = New-Layout -Name ("recursion-verification-refusal-" + $testCount) -Files @{ 'lib.rs' = $text }
+        $rejected = $false
+        try { Assert-RustCrateRecursionLimit -Path (Join-Path $root 'lib.rs') } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Missing, low, or duplicate recursion limit was accepted' }
+        $testCount++
+    }
+    $root = New-Layout -Name 'ambiguous-permission-constructors' -Files @{ 'config.rs' = 'permissions: Permissions {}, permissions: Permissions {}' }
+    $rejected = $false
+    try { Set-ConfigPermissionsForWindowsCustom -Path (Join-Path $root 'config.rs') | Out-Null } catch { $rejected = $_.Exception.Message.Contains('Multiple permission constructors') }
+    if (-not $rejected) { throw 'Multiple permission configuration routes were accepted' }
+    $testCount++
+
+    $hash = 'a' * 64
+    foreach ($case in @(
+        @{ Lines = @("$hash  archive.lib.gz", "$hash *bindings.rs") },
+        @{ Lines = @("$hash  archive.lib.gz", "$hash *bindings.rs", "$hash  extra-symbols.zip", '') }
+    )) {
+        $hashes = Read-ArtifactChecksums -Lines $case.Lines -RequiredNames @('archive.lib.gz', 'bindings.rs')
+        if ($hashes['archive.lib.gz'] -ne $hash -or $hashes['bindings.rs'] -ne $hash) { throw 'Required artifact hashes were not resolved' }
+        $testCount++
+    }
+    foreach ($case in @(
+        @{ Lines = @("$hash  archive.lib.gz") },
+        @{ Lines = @("$hash  archive.lib.gz", "$hash  archive.lib.gz", "$hash  bindings.rs") },
+        @{ Lines = @('bad-hash  archive.lib.gz', "$hash  bindings.rs") },
+        @{ Lines = @("$hash  ../archive.lib.gz", "$hash  bindings.rs") }
+    )) {
+        $rejected = $false
+        try { Read-ArtifactChecksums -Lines $case.Lines -RequiredNames @('archive.lib.gz', 'bindings.rs') | Out-Null } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Unsafe artifact checksum manifest was accepted' }
+        $testCount++
+    }
+
+    $names = @(Assert-CargoContractTestSelection -Listing @('some build diagnostic', 'suite::contract: test', 'suite::bench: benchmark', '1 test, 1 benchmark') -Filter 'suite::contract' -Exact)
+    if ($names.Count -ne 1) { throw 'Exact contract test discovery failed' }
+    Assert-CargoContractTestResult -Output @('test result: ok. 1 passed; 0 failed; 0 ignored; 9 filtered out; finished in 0.01s') -SelectedCount 1
+    $testCount++
+    $names = @(Assert-CargoContractTestSelection -Listing @('suite::tools::one: test', 'suite::tools::two: test') -Filter 'suite::tools::')
+    Assert-CargoContractTestResult -Output @('test result: ok. 2 passed; 0 failed; 0 ignored; 1 filtered out; finished in 0.01s') -SelectedCount $names.Count
+    $testCount++
+    foreach ($case in @(@{ Lines = @('0 tests, 0 benchmarks') }, @{ Lines = @('other::test: test') }, @{ Lines = @('suite::contract: test', 'suite::contract: test') })) {
+        $rejected = $false
+        try { Assert-CargoContractTestSelection -Listing $case.Lines -Filter 'suite::contract' -Exact | Out-Null } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Empty or incorrect Cargo contract selection was accepted' }
+        $testCount++
+    }
+    foreach ($output in @('', 'test result: ok. 0 passed; 0 failed; 0 ignored; 1 filtered out;', 'test result: ok. 0 passed; 0 failed; 1 ignored; 0 filtered out;', 'test result: FAILED. 0 passed; 1 failed; 0 ignored;')) {
+        $rejected = $false
+        try { Assert-CargoContractTestResult -Output @($output) -SelectedCount 1 } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Missing, skipped or failed Cargo contract execution was accepted' }
+        $testCount++
+    }
+    function cargo {
+        if ($args -contains '--list') {
+            $global:LASTEXITCODE = $script:cargoContractCase.ListExit
+            $script:cargoContractCase.Listing
+        } else {
+            $script:cargoContractRuns++
+            $global:LASTEXITCODE = $script:cargoContractCase.RunExit
+            $script:cargoContractCase.Output
+        }
+    }
+    try {
+        foreach ($case in @(
+            @{ Listing = @('suite::contract: test'); ListExit = 0; RunExit = 0; Output = 'test result: ok. 1 passed; 0 failed; 0 ignored;'; Accepted = $true; Runs = 1 },
+            @{ Listing = @('0 tests, 0 benchmarks'); ListExit = 0; RunExit = 0; Output = ''; Accepted = $false; Runs = 0 },
+            @{ Listing = @('suite::contract: test'); ListExit = 1; RunExit = 0; Output = ''; Accepted = $false; Runs = 0 },
+            @{ Listing = @('suite::contract: test'); ListExit = 0; RunExit = 1; Output = ''; Accepted = $false; Runs = 1 },
+            @{ Listing = @('suite::contract: test'); ListExit = 0; RunExit = 0; Output = 'test result: ok. 0 passed; 0 failed; 1 ignored;'; Accepted = $false; Runs = 1 }
+        )) {
+            $script:cargoContractCase = $case
+            $script:cargoContractRuns = 0
+            $accepted = $true
+            try { Invoke-CargoContractTest -Package fixture -Filter 'suite::contract' -Exact }
+            catch { $accepted = $false }
+            if ($accepted -ne $case.Accepted -or $script:cargoContractRuns -ne $case.Runs) { throw 'Cargo contract invocation accepted a false success or ran an undiscovered test' }
+            $testCount++
+        }
+    } finally { Remove-Item Function:cargo }
+    $global:LASTEXITCODE = 0
+
+    $root = New-Layout -Name 'transaction-refusal' -Files @{ 'first.rs' = "original`r`n"; 'last.rs' = 'original-last' }
+    $rejected = $false
+    try {
+        Invoke-SourcePatchTransaction -SourceRoot $root -RelativePaths @('first.rs', 'last.rs') -Patch {
+            param($Stage)
+            [IO.File]::WriteAllText((Join-Path $Stage 'first.rs'), 'changed')
+            throw 'late upstream anchor changed'
+        }
+    } catch { $rejected = $_.Exception.Message.Contains('late upstream anchor') }
+    if (-not $rejected -or [IO.File]::ReadAllText((Join-Path $root 'first.rs')) -ne "original`r`n" -or
+        [IO.File]::ReadAllText((Join-Path $root 'last.rs')) -ne 'original-last') { throw 'Failed patch partially modified its source' }
+    $testCount++
+    Invoke-SourcePatchTransaction -SourceRoot $root -RelativePaths @('first.rs', 'last.rs') -Patch {
+        param($Stage)
+        [IO.File]::WriteAllText((Join-Path $Stage 'first.rs'), 'patched-first')
+        [IO.File]::WriteAllText((Join-Path $Stage 'last.rs'), 'patched-last')
+    }
+    if ([IO.File]::ReadAllText((Join-Path $root 'first.rs')) -ne 'patched-first' -or
+        [IO.File]::ReadAllText((Join-Path $root 'last.rs')) -ne 'patched-last') { throw 'Validated patch transaction did not commit' }
+    $testCount++
+    $rejected = $false
+    try {
+        Invoke-SourcePatchTransaction -SourceRoot $root -RelativePaths @('first.rs', 'last.rs') -Patch {
+            param($Stage)
+            [IO.File]::WriteAllText((Join-Path $Stage 'first.rs'), 'new-patch')
+            [IO.File]::WriteAllText((Join-Path $root 'last.rs'), 'external-change')
+        }
+    } catch { $rejected = $_.Exception.Message.Contains('Source changed during patch planning') }
+    if (-not $rejected -or [IO.File]::ReadAllText((Join-Path $root 'first.rs')) -ne 'patched-first' -or
+        [IO.File]::ReadAllText((Join-Path $root 'last.rs')) -ne 'external-change') { throw 'Patch transaction overwrote a changed source snapshot' }
+    $testCount++
+    foreach ($relative in @('../escaped.rs', 'missing.rs')) {
+        $rejected = $false
+        try { Invoke-SourcePatchTransaction -SourceRoot $root -RelativePaths @($relative) -Patch { throw 'must not run' } } catch { $rejected = -not $_.Exception.Message.Contains('must not run') }
+        if (-not $rejected) { throw 'Invalid patch transaction input was accepted' }
+        $testCount++
+    }
+
     $root = New-Layout -Name 'version-discovery' -Files @{ 'Cargo.toml' = "[workspace.package]`nversion = `"0.0.0`"`n" }
     $versionCargo = Join-Path $root 'Cargo.toml'
     $tagPrefix = ('a' * 40) + "`trefs/tags/"

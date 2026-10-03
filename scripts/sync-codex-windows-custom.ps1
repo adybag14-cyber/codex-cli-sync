@@ -12,6 +12,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "Initialize-UpstreamCheckout.ps1")
+. (Join-Path $PSScriptRoot 'Invoke-CargoContractTest.ps1')
+. (Join-Path $PSScriptRoot 'Read-ArtifactChecksums.ps1')
+. (Join-Path $PSScriptRoot 'Test-WindowsBuildState.ps1')
 
 $StateDir = [System.IO.Path]::GetFullPath($StateDir)
 $WorkspaceDir = [System.IO.Path]::GetFullPath($WorkspaceDir)
@@ -249,18 +252,7 @@ function Install-RustyV8WindowsArtifacts {
     }
 
     $checksumLines = @(Get-Content -LiteralPath $checksumsPath | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    if ($checksumLines.Count -ne 2) {
-        throw "Expected exactly two rusty_v8 checksums in $checksumsPath, found $($checksumLines.Count)."
-    }
-
-    $expectedHashes = @{}
-    foreach ($line in $checksumLines) {
-        $checksumMatch = [regex]::Match($line, '^(?<hash>[0-9a-fA-F]{64})\s+\*?(?<name>[^\\/]+)$')
-        if (-not $checksumMatch.Success) {
-            throw "Invalid rusty_v8 checksum line: $line"
-        }
-        $expectedHashes[$checksumMatch.Groups['name'].Value] = $checksumMatch.Groups['hash'].Value.ToLowerInvariant()
-    }
+    $expectedHashes = Read-ArtifactChecksums -Lines $checksumLines -RequiredNames @($archiveName, $bindingName)
 
     foreach ($asset in @(
         [pscustomobject]@{ Name = $archiveName; Path = $archivePath },
@@ -349,10 +341,6 @@ if (Test-Path -LiteralPath $latestShaPath -PathType Leaf) {
 }
 
 Write-Host "Upstream $UpstreamRepo $UpstreamRef resolves to $upstreamSha."
-if (-not $Force -and $currentSha -eq $upstreamSha) {
-    Write-Host "State already points at $upstreamSha. Skipping custom build."
-    return
-}
 
 if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
     Invoke-Git -WorkingDirectory $sourceDir -Args @("remote", "set-url", "origin", $remoteUrl)
@@ -371,6 +359,18 @@ $versionResolution = Resolve-CodexCustomVersion -CargoTomlPath (Join-Path $sourc
 $customVersion = $versionResolution.custom_version
 Write-Host "Custom version $customVersion resolved from $($versionResolution.source); stable tag: $($versionResolution.latest_stable_tag)."
 Write-ActionOutput -Name "custom_version" -Value $customVersion
+$buildRecipeFingerprint = Get-WindowsBuildRecipeFingerprint -RepositoryRoot (Split-Path -Parent $scriptRoot)
+$previousState = $null
+if (Test-Path -LiteralPath $latestStatePath -PathType Leaf) {
+    try { $previousState = Get-Content -LiteralPath $latestStatePath -Raw | ConvertFrom-Json }
+    catch { Write-Host 'Stored Windows build state is unreadable; requiring a fresh validated build.' }
+}
+if (-not $Force -and (Test-WindowsBuildStateCurrent -State $previousState -StoredSha $currentSha `
+    -UpstreamSha $upstreamSha -UpstreamRepo $UpstreamRepo -UpstreamRef $UpstreamRef `
+    -BaseVersion $versionResolution.base_version -Target $WindowsTarget -RecipeFingerprint $buildRecipeFingerprint)) {
+    Write-Host 'Skipping unchanged successful Windows source, version base, target, and build recipe.'
+    return
+}
 Set-CargoWorkspaceVersion -CargoTomlPath (Join-Path $sourceDir "codex-rs\Cargo.toml") -Version $customVersion
 Set-PackageJsonVersionIfPresent -PackageJsonPath (Join-Path $sourceDir "codex-cli\package.json") -Version $customVersion
 
@@ -389,6 +389,7 @@ try {
         upstream_sha           = $upstreamSha
         custom_version         = $customVersion
         version_resolution     = $versionResolution
+        build_recipe_sha256    = $buildRecipeFingerprint
         windows_target         = $WindowsTarget
         generated_at_utc       = $generatedAt
         release_tag            = $releaseTag
@@ -433,15 +434,11 @@ try {
         $env:RUST_MIN_STACK = "8388608"
         $env:RUSTY_V8_ARCHIVE = $rustyV8Artifacts.ArchivePath
         $env:RUSTY_V8_SRC_BINDING_PATH = $rustyV8Artifacts.BindingPath
-        cargo test -p codex-core --test all $compatibilityTest -- --exact
-        if ($LASTEXITCODE -ne 0) {
-            throw "OpenAI request metadata compatibility test failed with exit code $LASTEXITCODE"
-        }
+        Invoke-CargoContractTest -Package codex-core -Filter $compatibilityTest -Exact `
+            -ReportPath (Join-Path $WorkspaceDir 'request-metadata-test-selection.json')
         # Exercise actual dynamic tool calls and content responses against the upstream mock server.
-        cargo test -p codex-app-server --test all suite::v2::dynamic_tools::
-        if ($LASTEXITCODE -ne 0) {
-            throw "Dynamic tool protocol compatibility tests failed with exit code $LASTEXITCODE"
-        }
+        Invoke-CargoContractTest -Package codex-app-server -Filter 'suite::v2::dynamic_tools::' `
+            -ReportPath (Join-Path $WorkspaceDir 'dynamic-tool-test-selection.json')
     } finally {
         if ($null -eq $testRustyV8Archive) { Remove-Item Env:RUSTY_V8_ARCHIVE -ErrorAction SilentlyContinue }
         else { $env:RUSTY_V8_ARCHIVE = $testRustyV8Archive }
@@ -505,6 +502,8 @@ Install-RipgrepWindowsX64 -DestinationPath $ripgrepPath
 . (Join-Path $scriptRoot 'New-WindowsCodexPackage.ps1')
 $packageLayout = New-WindowsCodexPackage -SourceRoot $sourceDir -BinaryDir $targetDir `
     -RipgrepPath $ripgrepPath -Destination $payloadRoot -Version $customVersion -Target $WindowsTarget
+Copy-Item -LiteralPath (Join-Path $WorkspaceDir 'request-metadata-test-selection.json') -Destination $payloadRoot
+Copy-Item -LiteralPath (Join-Path $WorkspaceDir 'dynamic-tool-test-selection.json') -Destination $payloadRoot
 Set-Content -Path (Join-Path $payloadRoot "VERSION.txt") -Value ($customVersion + "`n") -Encoding utf8
 
 $upstreamInstaller = Join-Path $sourceDir "scripts\install\install.ps1"
@@ -567,6 +566,7 @@ $manifest = [ordered]@{
     upstream_sha       = $upstreamSha
     custom_version     = $customVersion
     version_resolution = $versionResolution
+    build_recipe_sha256 = $buildRecipeFingerprint
     windows_target     = $WindowsTarget
     generated_at_utc   = $generatedAt
     release_tag        = $releaseTag

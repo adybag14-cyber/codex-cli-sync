@@ -14,7 +14,8 @@ def fixture():
     def entry(name):
         return f"pub async fn {name}() -> Result<()> {{\n    ensure_supported_platform()?;\n    original().await\n}}\n"
     return dict(zip(patcher.FILES, (
-        "".join(entry(n) for n in ("probe_app_server_version", "run", "bootstrap", "ensure_remote_control_ready",
+        "\n".join(export.replace('pubuse', 'pub use ').replace('pubmod', 'pub mod ') for export in sorted(patcher.PUBLIC_EXPORTS)) + "\n"
+        + "".join(entry(n) for n in ("probe_app_server_version", "run", "bootstrap", "ensure_remote_control_ready",
                                   "enable_remote_control_on_socket", "start_remote_control_pairing",
                                   "set_remote_control", "run_pid_update_loop", "update"))
         + '#[cfg(any(unix, windows))]\nfn ensure_supported_platform() -> Result<()> {\n    Ok(())\n}',
@@ -76,6 +77,22 @@ class Contracts(unittest.TestCase):
         values[patcher.FILES[-1]] *= 2
         with self.assertRaises(ValueError):
             patcher.patched_sources(values)
+
+    def test_new_public_module_or_reexport_is_rejected(self):
+        for export in ("pub mod automatic_start;", "pub use launch::unguarded_start;", "pub use launch::*;"):
+            with self.subTest(export=export):
+                values = fixture()
+                values[patcher.FILES[0]] += "\n" + export
+                with self.assertRaisesRegex(ValueError, "public exports changed"):
+                    patcher.patched_sources(values)
+
+    def test_indented_or_duplicate_public_entry_is_rejected(self):
+        for declaration in ("    pub fn unreviewed() {}", "pub async fn run() -> Result<()> { ensure_supported_platform()?; }"):
+            with self.subTest(declaration=declaration):
+                values = fixture()
+                values[patcher.FILES[0]] += "\n" + declaration
+                with self.assertRaisesRegex(ValueError, "public entry points changed"):
+                    patcher.patched_sources(values)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "Resolve-UpstreamMcpServer.ps1")
+. (Join-Path $PSScriptRoot 'Invoke-SourcePatchTransaction.ps1')
 
 $SourceRoot = [System.IO.Path]::GetFullPath($SourceRoot)
 
@@ -58,6 +59,14 @@ function Ensure-RustCrateRecursionLimit {
     Set-Text -Path $Path -Text $text
     Write-Host "Patched: raise Rust recursion limit to $Minimum in $Path"
     return $true
+}
+
+function Assert-RustCrateRecursionLimit {
+    param([string]$Path, [int]$Minimum = 256)
+    $matches = [regex]::Matches((Get-Text -Path $Path), '(?m)^#!\[recursion_limit\s*=\s*"(?<value>\d+)"\]')
+    if ($matches.Count -ne 1 -or [int]$matches[0].Groups['value'].Value -lt $Minimum) {
+        throw "Rust recursion limit contract failed in ${Path}: require one limit >= $Minimum."
+    }
 }
 
 function Show-WindowsDebugCommands {
@@ -361,10 +370,12 @@ function Set-ConfigPermissionsForWindowsCustom {
     param([Parameter(Mandatory = $true)][string]$Path)
 
     $text = Get-Text -Path $Path
-    $permissionsMatch = [regex]::Match($text, 'permissions\s*:\s*Permissions\s*\{')
-    if (-not $permissionsMatch.Success) {
+    $permissionsMatches = [regex]::Matches($text, 'permissions\s*:\s*Permissions\s*\{')
+    if ($permissionsMatches.Count -eq 0) {
         return $false
     }
+    if ($permissionsMatches.Count -ne 1) { throw 'Multiple permission constructors require review of every production configuration path.' }
+    $permissionsMatch = $permissionsMatches[0]
 
     $openBrace = $text.IndexOf("{", $permissionsMatch.Index)
     $closeBrace = Find-MatchingBrace -Text $text -OpenBraceIndex $openBrace
@@ -567,6 +578,8 @@ const FALLBACK_LOGIN_PORT: u16 = 1457;
         -Description "update login callback test constants"
 }
 
+function Invoke-WindowsCustomPatch {
+param([string]$SourceRoot)
 $configPath = Get-SourceFile -RelativePath "codex-rs\core\src\config\mod.rs"
 $windowsSandboxPath = Get-SourceFile -RelativePath "codex-rs\core\src\windows_sandbox.rs"
 $toolHandlersPath = Get-SourceFile -RelativePath "codex-rs\core\src\tools\handlers\mod.rs"
@@ -746,10 +759,10 @@ Set-WindowsToolPermissionsBypass -Path $toolHandlersPath
 Set-WindowsExecPolicyBypass -Path $execPolicyPath
 
 if ($mcpServerLibPath) {
-    Assert-Contains -Path $mcpServerLibPath -Needle '#![recursion_limit = "256"]' -Description "mcp-server recursion limit"
+    Assert-RustCrateRecursionLimit -Path $mcpServerLibPath
 }
-Assert-Contains -Path $execLibPath -Needle '#![recursion_limit = "256"]' -Description "codex-exec recursion limit"
-Assert-Contains -Path $tuiLibPath -Needle '#![recursion_limit = "256"]' -Description "codex-tui recursion limit"
+Assert-RustCrateRecursionLimit -Path $execLibPath
+Assert-RustCrateRecursionLimit -Path $tuiLibPath
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(AskForApproval::Never)' -Description "approval policy override"
 Assert-Contains -Path $configPath -Needle 'Constrained::allow_any(PermissionProfile::Disabled)' -Description "permission profile override"
 Assert-Contains -Path $tuiLibPath -Needle '// codex-cli-sync: Windows custom build never shows the startup sandbox NUX.' -Description "sandbox startup NUX disabled"
@@ -779,3 +792,25 @@ Assert-NotContains -Path $loginServerE2ePath -Needle 'const FALLBACK_LOGIN_PORT:
 if ($LASTEXITCODE -ne 0) { throw 'Local daemon removal patch failed.' }
 
 Write-Host "Windows custom Codex patch verified."
+}
+
+$patchInputs = @(
+    'codex-rs/core/src/config/mod.rs', 'codex-rs/core/src/windows_sandbox.rs',
+    'codex-rs/core/src/tools/handlers/mod.rs', 'codex-rs/core/src/exec_policy.rs',
+    'codex-rs/login/src/server.rs', 'codex-rs/login/tests/suite/login_server_e2e.rs',
+    'codex-rs/protocol/src/models.rs', 'codex-rs/core/src/client.rs',
+    'codex-rs/core/tests/suite/client.rs', 'codex-rs/core/src/session/mod.rs',
+    'codex-rs/exec/src/lib.rs', 'codex-rs/tui/src/lib.rs',
+    'codex-rs/tui/src/onboarding/onboarding_screen.rs', 'codex-rs/cli/src/main.rs',
+    'codex-rs/app-server-daemon/src/lib.rs', 'codex-rs/app-server-daemon/src/launch.rs',
+    'codex-rs/app-server-daemon/src/prepare_install.rs', 'codex-rs/tui/src/startup_orchestration.rs',
+    'codex-rs/Cargo.toml', 'codex-rs/Cargo.lock'
+)
+# Establish optional crate completeness against the real tree before staging.
+$mcpRoot = Resolve-UpstreamMcpServerCrateRoot -CodexRsDir (Join-Path $SourceRoot 'codex-rs')
+if ($mcpRoot) { $patchInputs += @('codex-rs/mcp-server/Cargo.toml', 'codex-rs/mcp-server/src/lib.rs') }
+if (Test-Path -LiteralPath (Join-Path $SourceRoot 'codex-rs/cli/Cargo.toml')) { $patchInputs += 'codex-rs/cli/Cargo.toml' }
+Invoke-SourcePatchTransaction -SourceRoot $SourceRoot -RelativePaths $patchInputs -Patch {
+    param($StagedRoot)
+    Invoke-WindowsCustomPatch -SourceRoot $StagedRoot
+}
