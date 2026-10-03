@@ -1,17 +1,27 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "60947e234156ac12bdb7fba2477d3965f166bd34",
-  "custom_version": "0.159.0-202609302114",
+  "upstream_sha": "b741e480e203f037ca726bc2a76d99a8e8668e66",
+  "custom_version": "0.161.0-202610031419",
+  "version_resolution": {
+    "custom_version": "0.161.0-202610031419",
+    "base_version": "0.161.0",
+    "source": "next_minor_after_latest_stable_tag",
+    "latest_stable_tag": "rust-v0.160.0",
+    "upstream_workspace_version": "0.0.0",
+    "upstream_ref": "main",
+    "timestamp_utc": "2026-10-03T14:19:34.7569325Z"
+  },
+  "build_recipe_sha256": "156f41d4ade3f498da9bbf855020e87b24a312c18b4504537beb65574e30a2cf",
   "windows_target": "x86_64-pc-windows-msvc",
-  "generated_at_utc": "2026-09-30T21:14:32.3911800Z",
-  "release_tag": "custom-windows-x64-60947e234156",
+  "generated_at_utc": "2026-10-03T14:19:28.1142180Z",
+  "release_tag": "custom-windows-x64-b741e480e203",
   "rolling_tag": "latest-windows-x64-custom",
   "patch_status": "applied",
   "custom_patches_failed": false,
   "artifact": {
-    "name": "codex-windows-x64-custom-60947e234156.zip",
-    "sha256": "bbb7f77d45f1d571e9d40f60f7f5160be3f1d399bff9f891731e1a2802fa4091"
+    "name": "codex-windows-x64-custom-b741e480e203.zip",
+    "sha256": "5fc9ca570c15a30c769a49290a7bd40082bd92481d1b34a32f394552ff16169f"
   },
   "patch_contract": {
     "local_daemon": "Disabled: embedded local TUI, no implicit attachment, lifecycle and updater rejected",
@@ -40,11 +50,11 @@
   },
   "release_files": [
     {
-      "name": "codex-windows-x64-custom-60947e234156.zip",
-      "sha256": "bbb7f77d45f1d571e9d40f60f7f5160be3f1d399bff9f891731e1a2802fa4091"
+      "name": "codex-windows-x64-custom-b741e480e203.zip",
+      "sha256": "5fc9ca570c15a30c769a49290a7bd40082bd92481d1b34a32f394552ff16169f"
     },
     {
-      "name": "codex-windows-x64-custom-60947e234156.manifest.json",
+      "name": "codex-windows-x64-custom-b741e480e203.manifest.json",
       "sha256": null
     },
     {
