@@ -5,6 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Resolve-UpstreamMcpServer.ps1")
 . (Join-Path $PSScriptRoot "Initialize-UpstreamCheckout.ps1")
+. (Join-Path $PSScriptRoot 'Resolve-CodexCustomVersion.ps1')
 
 # Import only the pure patch functions, not the patcher's main source mutation.
 $patchTokens = $null
@@ -29,7 +30,7 @@ foreach ($functionName in @('Ensure-RustCrateRecursionLimit', 'Enable-I686MuslLi
 $windowsSyncAst = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot "sync-codex-windows-custom.ps1"), [ref]$patchTokens, [ref]$patchErrors)
 if ($patchErrors.Count) { throw "Windows sync script has syntax errors: $patchErrors" }
-foreach ($functionName in @('New-CustomVersion', 'Set-CargoWorkspaceVersion', 'Set-PackageJsonVersionIfPresent')) {
+foreach ($functionName in @('Set-CargoWorkspaceVersion', 'Set-PackageJsonVersionIfPresent')) {
     $definition = $windowsSyncAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
     if (-not $definition) { throw "Missing Windows sync function $functionName" }
     . ([ScriptBlock]::Create($definition.Extent.Text))
@@ -63,16 +64,72 @@ function Assert-Rejected {
 }
 
 try {
-    $beforeStamp = [DateTime]::UtcNow.ToString('yyyyMMddHHmm')
-    $customVersion = New-CustomVersion
-    $afterStamp = [DateTime]::UtcNow.ToString('yyyyMMddHHmm')
-    if ($customVersion -notmatch '^0\.159\.0-(?<stamp>\d{12})$' -or $Matches.stamp -notin @($beforeStamp, $afterStamp)) {
-        throw "Custom version must use 0.159.0-<UTC timestamp>; got '$customVersion'"
+    $root = New-Layout -Name 'version-discovery' -Files @{ 'Cargo.toml' = "[workspace.package]`nversion = `"0.0.0`"`n" }
+    $versionCargo = Join-Path $root 'Cargo.toml'
+    $tagPrefix = ('a' * 40) + "`trefs/tags/"
+    $fixedTime = [DateTimeOffset]::Parse('2026-10-03T12:34:00+01:00')
+    foreach ($case in @(
+        @{ Tags = @('rust-v0.159.0'); Base = '0.160.0' },
+        @{ Tags = @('rust-v0.9.0', 'rust-v0.99.0', 'rust-v0.160.2', 'rust-v0.159.9'); Base = '0.161.0' },
+        @{ Tags = @('rust-v0.159.0', 'rust-v0.159.0', 'rust-v0.159.0^{}', 'rust-v0.162.0-alpha.9', 'rust-v0.0.2504291921', 'v9.0.0', 'rust-v0.160.0+build'); Base = '0.160.0' },
+        @{ Tags = @('rust-v0.999.5'); Base = '0.1000.0' },
+        @{ Tags = @('rust-v0.999.0', 'rust-v1.0.0'); Base = '1.1.0' },
+        @{ Tags = @('rust-v2.8.9', 'rust-v1.999.999'); Base = '2.9.0' }
+    )) {
+        $resolution = Resolve-CodexCustomVersion -CargoTomlPath $versionCargo -UpstreamRef main -RemoteUrl unused `
+            -TagLines @($case.Tags | ForEach-Object { $tagPrefix + $_ }) -Timestamp $fixedTime
+        if ($resolution.base_version -ne $case.Base -or $resolution.custom_version -ne ($case.Base + '-202610031134') -or
+            $resolution.source -ne 'next_minor_after_latest_stable_tag') { throw "Wrong automatic version: $($resolution | ConvertTo-Json -Compress)" }
+        $testCount++
     }
+    foreach ($case in @(
+        @{ Workspace = '0.0.0'; Ref = 'rust-v0.160.0'; Base = '0.160.0'; Source = 'upstream_ref' },
+        @{ Workspace = '0.0.0'; Ref = 'refs/tags/rust-v0.162.0-alpha.9'; Base = '0.162.0'; Source = 'upstream_ref' },
+        @{ Workspace = '1.0.0-rc.2+build'; Ref = 'main'; Base = '1.0.0'; Source = 'workspace_version' },
+        @{ Workspace = '0.158.1'; Ref = 'release-branch'; Base = '0.158.1'; Source = 'workspace_version' },
+        @{ Workspace = '0.160.0'; Ref = 'rust-v0.160.0'; Base = '0.160.0'; Source = 'upstream_ref' }
+    )) {
+        [IO.File]::WriteAllText($versionCargo, "[workspace.package]`nversion = `"$($case.Workspace)`"`n")
+        $resolution = Resolve-CodexCustomVersion -CargoTomlPath $versionCargo -UpstreamRef $case.Ref -RemoteUrl unused -TagLines @() -Timestamp $fixedTime
+        if ($resolution.base_version -ne $case.Base -or $resolution.source -ne $case.Source) { throw 'Explicit upstream version was not preserved' }
+        $testCount++
+    }
+    [IO.File]::WriteAllText($versionCargo, "[workspace.package]`r`nversion = `"0.160.0`" # source version`r`n`r`n[package]`r`nversion = `"9.9.9`"`r`n")
+    $resolution = Resolve-CodexCustomVersion -CargoTomlPath $versionCargo -UpstreamRef main -RemoteUrl unused -TagLines @() `
+        -Timestamp ([DateTimeOffset]::Parse('2028-03-01T00:05:00+02:00'))
+    if ($resolution.custom_version -ne '0.160.0-202802292205') { throw 'CRLF source or UTC leap-day rollover version failed' }
     $testCount++
+    [IO.File]::WriteAllText($versionCargo, "[workspace.package]`nversion = `"0.0.0`"`n")
+    $rejected = $false
+    try { Resolve-CodexCustomVersion -CargoTomlPath $versionCargo -UpstreamRef main -RemoteUrl (Join-Path $fixtureRoot 'missing-remote.git') | Out-Null }
+    catch { $rejected = $_.Exception.Message.Contains('stable-tag discovery failed') }
+    if (-not $rejected) { throw 'Failed Git tag discovery did not fail closed' }
+    $testCount++
+    foreach ($case in @(
+        @{ Cargo = "[workspace.package]`nversion = `"0.0.0`"`n"; Ref = 'main'; Tags = @() },
+        @{ Cargo = "[workspace.package]`nversion = `"0.0.0`"`n"; Ref = 'main'; Tags = @('rust-v0.162.0-alpha.1', 'rust-v0.0.2504291921') },
+        @{ Cargo = "[workspace.package]`nversion = `"0.0.0`"`n"; Ref = 'main'; Tags = @('rust-v0.2147483647.0') },
+        @{ Cargo = "[workspace.package]`nversion = `"0.0.0`"`n"; Ref = 'main'; Tags = @('rust-v1.9999999999.0') },
+        @{ Cargo = "[workspace.package]`nversion = `"0.159.0`"`n"; Ref = 'rust-v0.160.0'; Tags = @() },
+        @{ Cargo = "[workspace.package]`nversion = `"bad`"`n"; Ref = 'main'; Tags = @() },
+        @{ Cargo = "[workspace.package]`nversion = `"0.160.0-rc..1`"`n"; Ref = 'main'; Tags = @() },
+        @{ Cargo = "[workspace.package]`nversion = `"0.160.0-01`"`n"; Ref = 'main'; Tags = @() },
+        @{ Cargo = "[workspace.package]`nversion = `"0.0.0`"`n"; Ref = 'rust-vwrong'; Tags = @() },
+        @{ Cargo = "[workspace.package]`nversion = `"0.0.0`"`n"; Ref = 'rust-v0.0.0'; Tags = @() },
+        @{ Cargo = "[workspace.package]`nversion = `"0.159.0`"`nversion = `"0.160.0`"`n"; Ref = 'main'; Tags = @() },
+        @{ Cargo = "[package]`nversion = `"0.159.0`"`n"; Ref = 'main'; Tags = @() }
+    )) {
+        [IO.File]::WriteAllText($versionCargo, $case.Cargo)
+        $rejected = $false
+        try { Resolve-CodexCustomVersion -CargoTomlPath $versionCargo -UpstreamRef $case.Ref -RemoteUrl unused -TagLines @($case.Tags | ForEach-Object { $tagPrefix + $_ }) | Out-Null }
+        catch { $rejected = $true }
+        if (-not $rejected -or [IO.File]::ReadAllText($versionCargo) -ne $case.Cargo) { throw 'Unsafe version discovery was accepted or modified source' }
+        $testCount++
+    }
+    $customVersion = '0.160.0-202610031134'
     $semanticVersion = [Management.Automation.SemanticVersion]::Parse($customVersion)
     $catalogClientVersion = '{0}.{1}.{2}' -f $semanticVersion.Major, $semanticVersion.Minor, $semanticVersion.Patch
-    if ($catalogClientVersion -ne '0.159.0') {
+    if ($catalogClientVersion -ne '0.160.0') {
         throw "Custom version would advertise incompatible model catalog client version '$catalogClientVersion'"
     }
     $testCount++
@@ -188,14 +245,16 @@ enum DebugSubcommand {
         'mcp-server/src/lib.rs' = "pub fn other() {}`n"
     }
     Assert-Rejected -Root $root -ExpectedMessage "Unexpected upstream package identity"
-    foreach ($signature in @(
-        "    session: &Session,`n    cwd: &Path,",
-        "    session: &Session,`n    environment_id: &str,`n    cwd: &std::path::Path,",
-        "    session: &Session,`r`n    environment: &TurnEnvironment,`r`n    cwd: &PathUri,"
+    foreach ($case in @(
+        @{ Async = 'async '; Signature = "    session: &Session,`n    cwd: &Path," },
+        @{ Async = 'async '; Signature = "    session: &Session,`n    environment_id: &str,`n    cwd: &std::path::Path," },
+        @{ Async = 'async '; Signature = "    session: &Session,`r`n    environment: &TurnEnvironment,`r`n    cwd: &PathUri," },
+        @{ Async = ''; Signature = "    step_context: &StepContext,`n    environment: &TurnEnvironment,`n    cwd: &PathUri," },
+        @{ Async = ''; Signature = "    step_context: &StepContext,`r`n    environment: &TurnEnvironment,`r`n    cwd: &PathUri," }
     )) {
         $rust = @"
-pub(super) async fn apply_granted_turn_permissions(
-$signature
+pub(super) $($case.Async)fn apply_granted_turn_permissions(
+$($case.Signature)
     sandbox_permissions: SandboxPermissions,
     additional_permissions: Option<AdditionalPermissionProfile>,
 ) -> EffectiveAdditionalPermissions {
@@ -209,6 +268,23 @@ $signature
         if (-not $patched.Contains('if cfg!(target_os = "windows")') -or -not $patched.Contains('permissions_preapproved: true') -or -not $patched.Contains('original_permission_evaluator()')) {
             throw "Windows permissions patch did not preserve the required behavior"
         }
+        $testCount++
+        Set-WindowsToolPermissionsBypass -Path $path
+        if ([IO.File]::ReadAllText($path) -ne $patched) { throw 'Tool-permissions patch is not idempotent' }
+        $testCount++
+    }
+
+    foreach ($rust in @(
+        "pub(super) fn apply_granted_turn_permissions(unknown: &NewContext) -> EffectiveAdditionalPermissions {`n    original()`n}",
+        ($patched + "`n" + $patched),
+        $patched.Replace('StepContext', 'UnknownContext'),
+        $patched.Replace('    // codex-cli-sync:', '    other_operation(); // codex-cli-sync:')
+    )) {
+        $root = New-Layout -Name ("permissions-refusal-" + $testCount) -Files @{ 'handler.rs' = $rust }
+        $path = Join-Path $root 'handler.rs'
+        $rejected = $false
+        try { Set-WindowsToolPermissionsBypass -Path $path } catch { $rejected = $true }
+        if (-not $rejected -or [IO.File]::ReadAllText($path) -ne $rust) { throw 'Unknown or ambiguous permissions layout was accepted or modified' }
         $testCount++
     }
 

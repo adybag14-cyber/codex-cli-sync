@@ -13,6 +13,8 @@ on:
       - 'tools/CodexSyncDoctor/**'
       - '.github/workflows/*windows*.yml'
   workflow_dispatch:
+  schedule:
+    - cron: '5 */4 * * *'
 
 permissions:
   contents: read
@@ -22,6 +24,48 @@ env:
   DOTNET_NOLOGO: '1'
 
 jobs:
+  upstream-patch:
+    name: Upstream patch (${{ matrix.ref }})
+    runs-on: windows-2025
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        ref:
+          - 41f9084b30812db321a0b592def4f500d1e79cf4
+          - b65ab465cefa7b89c68317366b67e44431b90af4
+          - b741e480e203f037ca726bc2a76d99a8e8668e66
+          - main
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v6
+        with:
+          repository: openai/codex
+          ref: ${{ matrix.ref }}
+          path: out/contract-upstream
+          persist-credentials: false
+      - name: Verify Complete Windows Patch And Version Discovery
+        shell: pwsh
+        run: |
+          . ./scripts/Resolve-CodexCustomVersion.ps1
+          $resolved = Resolve-CodexCustomVersion -CargoTomlPath out/contract-upstream/codex-rs/Cargo.toml -UpstreamRef '${{ matrix.ref }}' -RemoteUrl https://github.com/openai/codex.git
+          $resolved | ConvertTo-Json | Set-Content out/version-resolution.json
+          ./scripts/patch-codex-windows-custom.ps1 -SourceRoot out/contract-upstream
+          git -C out/contract-upstream diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Upstream patch has whitespace errors.' }
+          git -C out/contract-upstream rev-parse HEAD | Set-Content out/upstream-sha.txt
+      - name: Retain Exact Upstream Version Evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: upstream-contract-${{ matrix.ref }}
+          path: |
+            out/version-resolution.json
+            out/upstream-sha.txt
+
   contracts:
     runs-on: windows-2025
     timeout-minutes: 15
