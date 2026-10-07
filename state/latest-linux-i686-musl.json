@@ -1,10 +1,10 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "19c4793964f3d70a9c916010376f96f636847a95",
+  "upstream_sha": "a6baf8867cb4c9726213c0884a5c8b11f0cfd8bf",
   "linux_target": "i686-unknown-linux-musl",
-  "generated_at_utc": "2026-10-07T00:07:47.9831723Z",
-  "release_tag": "linux-i686-musl-19c4793964f3",
+  "generated_at_utc": "2026-10-07T08:04:59.2826146Z",
+  "release_tag": "linux-i686-musl-a6baf8867cb4",
   "rolling_tag": "latest-linux-i686-musl",
   "custom_runtime_patches": "local_daemon_disabled; Windows permission patches not applied",
   "rusty_v8_required_by_codex_cli": false,
@@ -108,13 +108,13 @@
     "rusty_v8_object_file_output": ""
   },
   "artifact": {
-    "name": "codex-linux-i686-musl-19c4793964f3.tar.gz",
-    "sha256": "f12069aab6dd00a3fe6c05caa9eef685eff246a5e0ba32fb9334266b7474db32"
+    "name": "codex-linux-i686-musl-a6baf8867cb4.tar.gz",
+    "sha256": "f491c31af32e13b765bbd160bd67639f7276fe5c45c204631eede070a16e7a54"
   },
   "packaged_files": [
     {
       "path": "codex",
-      "sha256": "1bdaae54b2a67d0704e06efc21c756ddfaf0e45fc957720aca46f708ac71997f"
+      "sha256": "332951268a575e106393561c373bd25f8acfe3cbbc63775a161bafd67a3d7807"
     },
     {
       "path": "certs/ca-certificates.crt",
@@ -131,11 +131,11 @@
   ],
   "release_files": [
     {
-      "name": "codex-linux-i686-musl-19c4793964f3.tar.gz",
-      "sha256": "f12069aab6dd00a3fe6c05caa9eef685eff246a5e0ba32fb9334266b7474db32"
+      "name": "codex-linux-i686-musl-a6baf8867cb4.tar.gz",
+      "sha256": "f491c31af32e13b765bbd160bd67639f7276fe5c45c204631eede070a16e7a54"
     },
     {
-      "name": "codex-linux-i686-musl-19c4793964f3.manifest.json",
+      "name": "codex-linux-i686-musl-a6baf8867cb4.manifest.json",
       "sha256": null
     }
   ]
