@@ -29,6 +29,36 @@ Each now injects a late daemon-export change and a duplicate permission
 constructor and verifies that rejection leaves every source input unchanged.
 Each also applies the entire patch with upstream recursion limits of 512.
 
+## October 7 operational failures and current-source check
+
+The full patch and transaction/package contracts also pass against
+`5b0b2530354052b9194156d70d4c94a439368342`, now retained in the source matrix.
+The existing permission, daemon, OAuth, metadata and package requirements remain
+the release contract.
+
+- [Run 37579292313](https://github.com/adybag14-cyber/codex-cli-sync/actions/runs/37579292313)
+  patched and compiled upstream `5a3140176e668a2f72f3c098490eb7f7052d9d85`,
+  then hit an unauthenticated GitHub API rate limit while resolving ripgrep.
+  Dependency acquisition now happens before Cargo, uses the workflow token for
+  the API request, and verifies the selected ZIP's digest before caching or use.
+- [Run 37510874867](https://github.com/adybag14-cyber/codex-cli-sync/actions/runs/37510874867)
+  passed 29 packaged runtime checks, then failed removing a temporary Git pack
+  file held by an unrelated plugin clone in the isolated TUI fixture. The fixture
+  disables plugin discovery, requests graceful exit, waits for its exact owned
+  terminal, and retries transient cleanup locks. A real Windows sharing-violation
+  regression verifies eventual cleanup; permanent errors remain failures and
+  retain a diagnostic report.
+- [Run 37548627700](https://github.com/adybag14-cyber/codex-cli-sync/actions/runs/37548627700)
+  encountered an upstream test using the old one-argument
+  `TurnEnvironmentSelection::new` at `19c4793964f3d70a9c916010376f96f636847a95`.
+  The reviewed October 7 source passes the new second argument explicitly.
+  The native Cargo gate remains mandatory; source-anchor checks alone cannot
+  detect upstream test compilation failures.
+
+Fast coverage is in `test-windows-ripgrep.ps1` and
+`test-no-daemon-runtime-contracts.py`. Hosted publication still requires a
+fresh native release build and both packaged runtime probes.
+
 The supported response to an unfamiliar structural or semantic change is to
 stop publication, inspect the exact upstream change, update the transformation
 and its regression coverage, and pass a fresh native Windows build and runtime

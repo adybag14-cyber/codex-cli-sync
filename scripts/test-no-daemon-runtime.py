@@ -1,12 +1,15 @@
 """Exercise a fresh CLI's default TUI with a local Responses server and no credentials."""
 
 import argparse
+import errno
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import queue
+import shutil
+import stat
 import subprocess
 import tempfile
 import threading
@@ -75,6 +78,11 @@ class Terminal:
 
     def close(self):
         if self.alive():
+            self.write("/exit\r")
+            deadline = time.monotonic() + 3
+            while self.alive() and time.monotonic() < deadline:
+                time.sleep(0.1)
+        if self.alive():
             self.write("\x03")
             time.sleep(0.2)
             if self.alive():
@@ -88,6 +96,11 @@ class Terminal:
                 self.process.terminate(force=True)
             else:
                 self.process.kill()
+        deadline = time.monotonic() + 5
+        while self.alive() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if self.alive():
+            raise RuntimeError("The fixture's terminal process did not exit")
         if os.name != "nt":
             self.process.wait(timeout=5)
             os.close(self.master)
@@ -135,6 +148,7 @@ approval_policy = "never"
 cli_auth_credentials_store = "file"
 [features]
 daemon_auto_start = true
+plugins = false
 [model_providers.smoke]
 name = "Isolated Responses fixture"
 base_url = "http://127.0.0.1:{server.server_port}/v1"
@@ -146,7 +160,7 @@ trust_level = "trusted"
 ''', encoding="utf-8")
     env = dict(os.environ, CODEX_HOME=str(config_home), TERM="xterm-256color")
     for key in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY", "CODEX_HOME_OVERRIDE",
-                "CODEX_EXEC_SERVER_URL", "NO_COLOR"):
+                "CODEX_EXEC_SERVER_URL", "NO_COLOR", "GH_TOKEN", "GITHUB_TOKEN"):
         env.pop(key, None)
 
     def run_result(*args):
@@ -158,11 +172,15 @@ trust_level = "trusted"
     transcript = ""
     try:
         checks = check_disabled_commands(run_result, config_home)
-        # No --no-daemon, --disable or -c override: they could mask a broken default.
+        # Keep daemon_auto_start=true and omit --no-daemon. Only unrelated plugin
+        # downloads are disabled, keeping this local Responses fixture offline.
         terminal = Terminal([str(executable), "--no-alt-screen", "hi"], workspace, env)
         deadline = time.monotonic() + 120
         while ANSWER not in transcript:
-            value = terminal.messages.get(timeout=max(0.01, deadline - time.monotonic()))
+            try:
+                value = terminal.messages.get(timeout=max(0.01, deadline - time.monotonic()))
+            except queue.Empty as error:
+                raise AssertionError(f"Default TUI did not answer hi: {transcript[-6000:]}") from error
             if value is None:
                 raise AssertionError(f"Default TUI exited before answering hi: {transcript[-6000:]}")
             transcript += value
@@ -178,13 +196,72 @@ trust_level = "trusted"
         checks += ["default_interactive_hi_round_trip", "daemon_auto_start_cannot_override_patch",
                    "no_daemon_state_after_interactive_turn"]
         return {"checks": checks, "passed": len(checks), "requestCount": len(requests), "prompt": "hi",
-                "answer": ANSWER, "backend": "local Responses fixture", "uid": os.getuid() if os.name != "nt" else None}
+                "answer": ANSWER, "backend": "local Responses fixture", "pluginsEnabled": False,
+                "uid": os.getuid() if os.name != "nt" else None}
     finally:
-        if terminal is not None:
-            terminal.close()
-        server.shutdown()
-        server.server_close()
-        worker.join(timeout=5)
+        try:
+            if terminal is not None:
+                terminal.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=5)
+
+
+def remove_fixture(root, expected_parent, timeout=10):
+    """Retry transient Windows file locks only inside this owned fixture."""
+    root = Path(root)
+    parent = Path(expected_parent).resolve()
+    if root.is_symlink() or root.resolve().parent != parent or not root.name.startswith(".cx-free-"):
+        raise ValueError(f"Refusing cleanup outside the owned fixture: {root}")
+
+    def clear_readonly(function, path, error):
+        if isinstance(error, FileNotFoundError):
+            return
+        if not isinstance(error, PermissionError):
+            raise error
+        os.chmod(path, os.stat(path).st_mode | stat.S_IWRITE | stat.S_IREAD)
+        function(path)
+
+    deadline = time.monotonic() + timeout
+    while root.exists():
+        try:
+            shutil.rmtree(root, onexc=clear_readonly)
+        except OSError as error:
+            if error.errno not in (errno.EACCES, errno.EPERM, errno.EBUSY, errno.ENOTEMPTY) and \
+                    getattr(error, "winerror", None) not in (5, 32, 33, 145):
+                raise
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"Fixture cleanup failed; retained path: {root}") from error
+            time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+
+
+def run_fixture(executable, output, parent=None):
+    parent = Path.home() if parent is None else Path(parent)
+    digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+    root = Path(tempfile.mkdtemp(prefix=".cx-free-", dir=parent)).resolve()
+    report = {"executableSha256": digest,
+              "fixtureRoot": str(root), "ok": False}
+    failure = None
+    try:
+        report.update(smoke(executable, root))
+    except Exception as error:
+        failure = error
+        report["smokeError"] = f"{type(error).__name__}: {error}"
+    finally:
+        try:
+            remove_fixture(root, parent)
+            report["cleanup"] = "removed"
+        except Exception as error:
+            report["cleanup"] = "failed"
+            report["cleanupError"] = f"{type(error).__name__}: {error}"
+            failure = failure or error
+        report["ok"] = failure is None
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    if failure:
+        raise RuntimeError(f"Daemon-free runtime fixture failed; see {output}") from failure
+    return report
 
 
 if __name__ == "__main__":
@@ -193,9 +270,5 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     executable = args.codex.resolve()
-    with tempfile.TemporaryDirectory(prefix=".cx-free-", dir=Path.home()) as temporary:
-        report = smoke(executable, Path(temporary).resolve())
-    report["executableSha256"] = hashlib.sha256(executable.read_bytes()).hexdigest()
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    report = run_fixture(executable, args.output.resolve())
     print(json.dumps(report, indent=2))

@@ -36,6 +36,9 @@ on:
       - scripts/patch-codex-no-daemon.py
       - scripts/test-no-daemon-patch.py
       - scripts/test-no-daemon-runtime.py
+      - scripts/test-no-daemon-runtime-contracts.py
+      - scripts/Install-WindowsRipgrep.ps1
+      - scripts/test-windows-ripgrep.ps1
       - scripts/Resolve-UpstreamMcpServer.ps1
       - scripts/Initialize-UpstreamCheckout.ps1
       - scripts/Resolve-CodexCustomVersion.ps1
@@ -106,7 +109,9 @@ jobs:
 
       - name: Test Upstream Compatibility Contracts
         shell: pwsh
-        run: ./scripts/test-upstream-compatibility.ps1
+        run: |
+          ./scripts/test-upstream-compatibility.ps1
+          ./scripts/test-windows-ripgrep.ps1
 
       - name: Check Windows CLI Runtime Probe Contracts
         shell: pwsh
@@ -115,6 +120,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows CLI runtime probe contracts failed.' }
           python scripts/test-no-daemon-patch.py
           if ($LASTEXITCODE -ne 0) { throw 'Local daemon patch contracts failed.' }
+          python scripts/test-no-daemon-runtime-contracts.py
+          if ($LASTEXITCODE -ne 0) { throw 'Daemon-free fixture contracts failed.' }
 
       - name: Restore Cargo Cache
         id: cargo-cache-restore
@@ -126,6 +133,7 @@ jobs:
             ~/.cargo/git
             out/codex-upstream/codex-rs/target
             out/rusty-v8
+            out/ripgrep
           key: windows-codex-custom-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/*.ps1', 'state/latest-custom-main-sha.txt') }}
           restore-keys: |
             windows-codex-custom-cargo-${{ runner.os }}-
@@ -145,6 +153,7 @@ jobs:
         id: sync
         shell: pwsh
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_SYNC: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force == 'true') }}
           UPSTREAM_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.upstream_ref || 'main' }}
         run: |
@@ -167,7 +176,19 @@ jobs:
             ~/.cargo/git
             out/codex-upstream/codex-rs/target
             out/rusty-v8
+            out/ripgrep
           key: ${{ steps.cargo-cache-restore.outputs.cache-primary-key }}
+      - name: Upload Windows Build Diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-build-diagnostics
+          path: |
+            out/*test-selection.json
+            out/custom-*/**/runtime-checks.json
+            out/custom-*/**/no-daemon-checks.json
+          if-no-files-found: warn
+
       - name: Upload Build Artifact
         if: steps.sync.outputs.changed == 'true' && steps.sync.outputs.patch_status == 'applied'
         uses: actions/upload-artifact@v7

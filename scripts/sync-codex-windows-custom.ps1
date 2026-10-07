@@ -15,6 +15,7 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot 'Invoke-CargoContractTest.ps1')
 . (Join-Path $PSScriptRoot 'Read-ArtifactChecksums.ps1')
 . (Join-Path $PSScriptRoot 'Test-WindowsBuildState.ps1')
+. (Join-Path $PSScriptRoot 'Install-WindowsRipgrep.ps1')
 
 $StateDir = [System.IO.Path]::GetFullPath($StateDir)
 $WorkspaceDir = [System.IO.Path]::GetFullPath($WorkspaceDir)
@@ -172,45 +173,6 @@ function Download-File {
         "X-GitHub-Api-Version" = "2022-11-28"
     }
     Invoke-WebRequest -Uri $Uri -Headers $headers -OutFile $OutFile
-}
-
-function Install-RipgrepWindowsX64 {
-    param([Parameter(Mandatory = $true)][string]$DestinationPath)
-
-    $headers = @{
-        "Accept"               = "application/vnd.github+json"
-        "User-Agent"           = "codex-cli-sync"
-        "X-GitHub-Api-Version" = "2022-11-28"
-    }
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/BurntSushi/ripgrep/releases/latest" -Headers $headers
-    $asset = @($release.assets | Where-Object {
-        [string]$_.name -match '^ripgrep-.*-x86_64-pc-windows-msvc\.zip$'
-    } | Select-Object -First 1)
-
-    if ($asset.Count -eq 0) {
-        throw "Could not find a ripgrep x86_64-pc-windows-msvc release asset."
-    }
-
-    $downloadDir = Join-Path $WorkspaceDir "ripgrep"
-    $zipPath = Join-Path $downloadDir ([string]$asset[0].name)
-    $extractDir = Join-Path $downloadDir "extract"
-    if (Test-Path -LiteralPath $downloadDir) {
-        Remove-Item -Recurse -Force -LiteralPath $downloadDir
-    }
-    New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
-
-    Download-File -Uri ([string]$asset[0].browser_download_url) -OutFile $zipPath
-    Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
-    $rg = Get-ChildItem -Path $extractDir -Recurse -Filter rg.exe | Select-Object -First 1
-    if ($null -eq $rg) {
-        throw "Downloaded ripgrep asset did not contain rg.exe."
-    }
-
-    Copy-Item -LiteralPath $rg.FullName -Destination $DestinationPath -Force
-    & $DestinationPath --version | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-        throw "Packaged rg.exe did not run successfully."
-    }
 }
 
 function Install-RustyV8WindowsArtifacts {
@@ -420,6 +382,9 @@ try {
     return
 }
 
+# Resolve and verify network-dependent packaging inputs before expensive Cargo work.
+$ripgrepPath = Join-Path $WorkspaceDir 'package-rg.exe'
+$ripgrepArtifact = Install-RipgrepWindowsX64 -DestinationPath $ripgrepPath -CacheDirectory (Join-Path $WorkspaceDir 'ripgrep')
 $rustyV8Artifacts = Install-RustyV8WindowsArtifacts -SourceDir $sourceDir -Target $WindowsTarget
 
 Push-Location (Join-Path $sourceDir "codex-rs")
@@ -497,8 +462,6 @@ if (Test-Path -LiteralPath $manifestPath) {
     Remove-Item -Force -LiteralPath $manifestPath
 }
 
-$ripgrepPath = Join-Path $WorkspaceDir 'package-rg.exe'
-Install-RipgrepWindowsX64 -DestinationPath $ripgrepPath
 . (Join-Path $scriptRoot 'New-WindowsCodexPackage.ps1')
 $packageLayout = New-WindowsCodexPackage -SourceRoot $sourceDir -BinaryDir $targetDir `
     -RipgrepPath $ripgrepPath -Destination $payloadRoot -Version $customVersion -Target $WindowsTarget
@@ -594,6 +557,7 @@ $manifest = [ordered]@{
         tool_schema_compatibility = "Native app-server RPC checks for canonical, legacy, namespaced, nullable, and sanitizable dynamic tool schemas; invalid definitions remain rejected"
         sync_doctor               = "Self-contained .NET companion inspects browser policy and repairs legacy package layout using the upstream generator; no browser security modifications"
     }
+    ripgrep            = $ripgrepArtifact
     rusty_v8           = [ordered]@{
         version         = $rustyV8Artifacts.Version
         release_tag     = $rustyV8Artifacts.ReleaseTag
