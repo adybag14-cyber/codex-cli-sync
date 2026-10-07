@@ -72,6 +72,12 @@ cover idempotence, CRLF, partial fixes and rejection without partial writes.
 Native Guardian tests now run on the pinned failure and live main, so a green
 source-rewrite check alone cannot conceal this compiler failure.
 
+Upstream subsequently fixed the same migration in
+[`a513012`](https://github.com/openai/codex/commit/a5130128697b10022a88e8f5eae6dca77393b4b0),
+using the existing `From<String> for SectionContent` conversion for framing.
+That reviewed layout is an explicit no-op case, with its own pinned source
+snapshot and byte-identity regression, rather than another downstream rewrite.
+
 Replay validation also exposed duplicate sanitizer/guard insertion when the
 complete Windows patch was applied twice. The generic insertion and replacement
 helpers now recognize the complete installed edit at its expected anchor,

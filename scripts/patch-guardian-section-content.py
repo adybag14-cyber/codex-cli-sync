@@ -14,11 +14,13 @@ PROFILE = "codex-rs/guardian-context/src/profile.rs"
 CACHE_TEST = "codex-rs/guardian-context/tests/cache_prefix.rs"
 
 
-def wrap_expression(text, prefix, item, suffix, label, allow_into=False):
+def wrap_expression(text, prefix, item, suffix, label, allow_into=False, fixed_alternative=None):
     old = re.compile(f"(?P<prefix>{prefix})(?P<item>{item})(?P<suffix>{suffix})")
     wrapped = rf"SectionContent::Other\(\s*{item}\s*\)"
     if allow_into:
         wrapped = rf"(?:{wrapped}|{item}\s*\.into\(\))"
+    if fixed_alternative:
+        wrapped = rf"(?:{wrapped}|{fixed_alternative})"
     fixed = re.compile(prefix + wrapped + suffix)
     old_matches, fixed_matches = list(old.finditer(text)), list(fixed.finditer(text))
     if len(old_matches) + len(fixed_matches) != 1:
@@ -48,9 +50,15 @@ def patched_source(text, composition):
                            r"\s*if text\s*==\s*assistant_start\s*\|\|\s*text\s*==\s*assistant_end",
                            "assistant marker match")
     for marker in ("start", "end"):
+        string_conversion = rf"assistant_{marker}\.to_owned\(\)\s*\.into\(\)"
+        if re.search(string_conversion, text) and (
+                "impl From<String> for SectionContent" not in composition or
+                "Self::Other(ContentItem::InputText { text })" not in composition):
+            raise ValueError("Guardian string-to-SectionContent conversion changed")
         text = wrap_expression(text, r"Budgeted::required\(\s*",
                                rf"ContentItem::InputText\s*\{{\s*text:\s*assistant_{marker}\.to_owned\(\),?\s*\}}",
-                               r"\s*,?\s*\)", f"assistant {marker} constructor", allow_into=True)
+                               r"\s*,?\s*\)", f"assistant {marker} constructor", allow_into=True,
+                               fixed_alternative=string_conversion)
     return text
 
 

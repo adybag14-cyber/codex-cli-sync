@@ -1,6 +1,7 @@
 """Fail-closed compatibility contracts for the reviewed Guardian type migration."""
 import importlib.util
 from pathlib import Path
+import re
 import tempfile
 import unittest
 
@@ -63,6 +64,16 @@ class GuardianContracts(unittest.TestCase):
         partial = SOURCE.replace("matches!(&item.content, ContentItem::InputText { text }",
                                  "matches!(&item.content, SectionContent::Other(ContentItem::InputText { text })", 1)
         self.assertEqual(bridge.patched_source(partial, COMPOSITION), bridge.patched_source(SOURCE, COMPOSITION))
+
+    def test_upstream_fixed_string_conversion_is_byte_identical(self):
+        source = bridge.patched_source(SOURCE, COMPOSITION)
+        for marker in ("start", "end"):
+            source = re.sub(rf"SectionContent::Other\(ContentItem::InputText\s*\{{\s*text:\s*assistant_{marker}\.to_owned\(\),\s*\}}\)",
+                            f"assistant_{marker}.to_owned().into()", source)
+        composition = COMPOSITION + "\nimpl From<String> for SectionContent { fn from(text: String) -> Self { Self::Other(ContentItem::InputText { text }) } }"
+        self.assertEqual(bridge.patched_source(source, composition), source)
+        with self.assertRaisesRegex(ValueError, "conversion changed"):
+            bridge.patched_source(source, COMPOSITION)
 
     def test_renamed_test_api_preserves_arguments_and_legacy_provider(self):
         self.assertEqual(bridge.patched_cache_test(TEST, PROFILE),
