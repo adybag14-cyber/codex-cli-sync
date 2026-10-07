@@ -133,7 +133,6 @@ jobs:
             ~/.cargo/git
             out/codex-upstream/codex-rs/target
             out/rusty-v8
-            out/ripgrep
           key: windows-codex-custom-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/*.ps1', 'state/latest-custom-main-sha.txt') }}
           restore-keys: |
             windows-codex-custom-cargo-${{ runner.os }}-
@@ -176,7 +175,6 @@ jobs:
             ~/.cargo/git
             out/codex-upstream/codex-rs/target
             out/rusty-v8
-            out/ripgrep
           key: ${{ steps.cargo-cache-restore.outputs.cache-primary-key }}
       - name: Upload Windows Build Diagnostics
         if: always()
