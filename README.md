@@ -68,6 +68,14 @@ Manual `workflow_dispatch` runs expose `force`, `upstream_ref`, `run_target`, an
 
 Release publishing is handled by [`scripts/publish-github-release.ps1`](scripts/publish-github-release.ps1) through the GitHub Releases API and the repo-scoped `GITHUB_TOKEN`.
 
+Windows artifact upload, both release publications, and the successful-state
+commit run before optional Cargo-cache saving. Cache restore is bounded to ten
+minutes and saving to thirty minutes; cache failures are non-fatal and cancelled
+runs do not start another save. The Windows job allows four hours, with a
+three-hour build/package limit that leaves time for publication and cache
+maintenance. Cache paths and restore prefixes are preserved so existing compiled
+outputs remain reusable.
+
 Windows packaging resolves ripgrep **before** Cargo tests and compilation. The
 GitHub API request uses `GH_TOKEN` or `GITHUB_TOKEN` when provided; Actions passes
 its repository token explicitly. Release downloads receive no bearer token.
