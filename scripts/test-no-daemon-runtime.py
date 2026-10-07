@@ -245,7 +245,7 @@ def run_fixture(executable, output, parent=None):
     failure = None
     try:
         report.update(smoke(executable, root))
-    except Exception as error:
+    except BaseException as error:
         failure = error
         report["smokeError"] = f"{type(error).__name__}: {error}"
     finally:

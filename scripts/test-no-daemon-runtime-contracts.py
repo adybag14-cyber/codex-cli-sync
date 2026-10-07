@@ -98,6 +98,16 @@ class CleanupContracts(unittest.TestCase):
         self.assertEqual(report["cleanup"], "removed")
         self.assertFalse(Path(report["fixtureRoot"]).exists())
 
+    def test_interrupted_smoke_is_never_reported_as_success(self):
+        output = self.parent_path / "report.json"
+        with mock.patch.object(probe, "smoke", side_effect=KeyboardInterrupt("interrupted")):
+            with self.assertRaises(RuntimeError):
+                probe.run_fixture(self.file, output, self.parent_path)
+        report = json.loads(output.read_text())
+        self.assertFalse(report["ok"])
+        self.assertIn("KeyboardInterrupt", report["smokeError"])
+        self.assertEqual(report["cleanup"], "removed")
+
     def test_graceful_terminal_exit_precedes_interrupts(self):
         terminal = object.__new__(probe.Terminal)
         terminal.alive = mock.Mock(side_effect=[True] + [False] * 10)
