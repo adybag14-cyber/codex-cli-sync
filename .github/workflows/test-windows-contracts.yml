@@ -36,6 +36,7 @@ jobs:
           - b65ab465cefa7b89c68317366b67e44431b90af4
           - b741e480e203f037ca726bc2a76d99a8e8668e66
           - 5b0b2530354052b9194156d70d4c94a439368342
+          - a5130128697b10022a88e8f5eae6dca77393b4b0
           - main
     steps:
       - uses: actions/checkout@v6
@@ -95,6 +96,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Local daemon patch contracts failed.' }
           python scripts/test-no-daemon-runtime-contracts.py
           if ($LASTEXITCODE -ne 0) { throw 'Daemon-free fixture contracts failed.' }
+          python scripts/test-guardian-section-content.py
+          if ($LASTEXITCODE -ne 0) { throw 'Guardian compatibility contracts failed.' }
 
       - name: Check Out Verified Upstream Packaging Source
         uses: actions/checkout@v6
@@ -125,4 +128,59 @@ jobs:
         with:
           name: windows-runtime-fixture-report
           path: out/runtime-ci-fixture/runtime-checks.json
+          if-no-files-found: warn
+
+  guardian-rust:
+    name: Guardian Rust tests (${{ matrix.ref }})
+    runs-on: windows-2025
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        ref:
+          - 5b0b2530354052b9194156d70d4c94a439368342
+          - main
+    env:
+      CARGO_BUILD_JOBS: '4'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/out/guardian-target
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v6
+        with:
+          repository: openai/codex
+          ref: ${{ matrix.ref }}
+          path: out/guardian-upstream
+          persist-credentials: false
+      - uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            out/guardian-target
+          key: windows-guardian-${{ matrix.ref }}-${{ hashFiles('out/guardian-upstream/codex-rs/Cargo.lock') }}
+          restore-keys: |
+            windows-guardian-${{ matrix.ref }}-
+      - name: Patch and compile the complete Guardian context test suite
+        shell: pwsh
+        run: |
+          ./scripts/patch-codex-windows-custom.ps1 -SourceRoot out/guardian-upstream
+          git -C out/guardian-upstream diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Guardian patch has whitespace errors.' }
+          git -C out/guardian-upstream rev-parse HEAD | Set-Content out/guardian-upstream-sha.txt
+          ./scripts/test-guardian-context.ps1 -SourceRoot out/guardian-upstream -ReportPath out/guardian-test-selection.json -Locked
+      - name: Retain Guardian test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: guardian-rust-${{ matrix.ref }}
+          path: |
+            out/guardian-upstream-sha.txt
+            out/guardian-test-selection.json
           if-no-files-found: warn

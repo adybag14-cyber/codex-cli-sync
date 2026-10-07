@@ -17,7 +17,7 @@ $patchErrors = $null
 $patchAst = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot "patch-codex-windows-custom.ps1"), [ref]$patchTokens, [ref]$patchErrors)
 if ($patchErrors.Count) { throw "Windows patcher has syntax errors: $patchErrors" }
-foreach ($functionName in @('Get-Text', 'Set-Text', 'Insert-AfterOnce', 'Set-WindowsToolPermissionsBypass', 'Set-WindowsExecPolicyBypass', 'Disable-WindowsSandboxStartupNux', 'Show-WindowsDebugCommands', 'Assert-RustCrateRecursionLimit', 'Set-ConfigPermissionsForWindowsCustom')) {
+foreach ($functionName in @('Get-Text', 'Set-Text', 'Replace-Once', 'Insert-AfterOnce', 'Set-WindowsToolPermissionsBypass', 'Set-WindowsExecPolicyBypass', 'Disable-WindowsSandboxStartupNux', 'Show-WindowsDebugCommands', 'Assert-RustCrateRecursionLimit', 'Set-ConfigPermissionsForWindowsCustom')) {
     $definition = $patchAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
     if (-not $definition) { throw "Missing patch function $functionName" }
     . ([ScriptBlock]::Create($definition.Extent.Text))
@@ -68,6 +68,37 @@ function Assert-Rejected {
 }
 
 try {
+    foreach ($newline in @("`n", "`r`n")) {
+        $root = New-Layout -Name ('reapply-' + $testCount) -Files @{ 'fixture.rs' = "anchor();${newline}original();${newline}" }
+        $path = Join-Path $root 'fixture.rs'
+        $insertion = "${newline}inserted();"
+        Insert-AfterOnce -Path $path -Pattern 'anchor\(\);' -Insertion $insertion -Description 'repeatable insertion'
+        $first = [IO.File]::ReadAllBytes($path)
+        Insert-AfterOnce -Path $path -Pattern 'anchor\(\);' -Insertion $insertion -Description 'repeatable insertion'
+        if ([Convert]::ToBase64String($first) -cne [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))) { throw 'Repeated insertion changed bytes' }
+        $testCount++
+        [IO.File]::WriteAllText($path, "anchor();${insertion}${insertion}")
+        $before = [IO.File]::ReadAllText($path)
+        $errorText = ''
+        try { Insert-AfterOnce -Path $path -Pattern 'anchor\(\);' -Insertion $insertion -Description 'duplicate insertion' }
+        catch { $errorText = $_.Exception.Message }
+        if ($errorText -notlike '*duplicated or misplaced*' -or [IO.File]::ReadAllText($path) -cne $before) { throw 'Duplicate insertion was not rejected without mutation' }
+        $testCount++
+        [IO.File]::WriteAllText($path, "if !is_openai {${newline}original();${newline}}")
+        $replacement = "if is_openai { sanitize(); }${newline}if !is_openai {"
+        Replace-Once -Path $path -Pattern '(?m)^if !is_openai \{' -Replacement $replacement -Description 'overlapping metadata replacement'
+        $first = [IO.File]::ReadAllBytes($path)
+        Replace-Once -Path $path -Pattern '(?m)^if !is_openai \{' -Replacement $replacement -Description 'overlapping metadata replacement'
+        if ([Convert]::ToBase64String($first) -cne [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))) { throw 'Repeated replacement changed bytes' }
+        $testCount++
+        [IO.File]::WriteAllText($path, "unrelated { ${replacement} }${newline}if !is_openai { original(); }")
+        $before = [IO.File]::ReadAllText($path)
+        $errorText = ''
+        try { Replace-Once -Path $path -Pattern '(?m)^if !is_openai \{' -Replacement $replacement -Description 'misplaced replacement' }
+        catch { $errorText = $_.Exception.Message }
+        if ($errorText -notlike '*duplicated or misplaced*' -or [IO.File]::ReadAllText($path) -cne $before) { throw 'Misplaced replacement was not rejected without mutation' }
+        $testCount++
+    }
     $root = New-Layout -Name 'recipe-fingerprint' -Files @{
         'scripts/patch.ps1' = 'source patch'
         '.github/workflows/sync-codex-windows-custom.yml' = 'recipe'

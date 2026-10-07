@@ -115,6 +115,20 @@ regressions reproducible while the live check exposes future drift. Unknown
 source layouts still fail closed; passing source contracts does not replace
 the native release build and packaged CLI runtime gates.
 
+The October 7 upstream retained-context refactor mixed `ContentItem` expressions
+with the newer `SectionContent` container and left one integration test calling
+the renamed transcript API. A shared, guarded compatibility bridge fixes those
+specific expressions for Windows and Linux. It accepts the reviewed old/fixed
+forms, preserves source line endings, and rejects ambiguous changes before
+writing. On Windows it participates in the complete source-patch transaction.
+Native Windows CI now compiles and runs the entire `codex-guardian-context` crate
+against the failing pinned revision and live main. The release also runs those
+tests before the larger request/dynamic-tool suites and bundles their result.
+The complete Windows patch is also replayed against every source snapshot:
+insertion/replacement helpers recognize existing edits at their expected anchors,
+reject duplicate or misplaced edits, and leave already-patched source bytes
+unchanged. This covers the metadata sanitizer as well as the sandbox entry guards.
+
 The broader [Windows upstream contract audit](docs/windows-upstream-contract-audit.md)
 documents each patch boundary, the changes it handles, its evidence, and the
 changes that require review. The full Windows patch is planned against staged

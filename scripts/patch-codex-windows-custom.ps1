@@ -163,6 +163,17 @@ function Replace-Once {
     $text = Get-Text -Path $Path
     $regex = [regex]::new($Pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline -bor [System.Text.RegularExpressions.RegexOptions]::Multiline)
     $matches = $regex.Matches($text)
+    $fixedPattern = [regex]::Escape($Replacement.Replace("`r`n", "`n")).Replace('\n', '\r?\n')
+    $fixed = [regex]::Matches($text, $fixedPattern)
+    if ($fixed.Count -eq 1 -and ($matches.Count -eq 0 -or
+        ($matches.Count -eq 1 -and $matches[0].Index -ge $fixed[0].Index -and
+         $matches[0].Index + $matches[0].Length -le $fixed[0].Index + $fixed[0].Length))) {
+        Write-Host "Kept: $Description"
+        return
+    }
+    if ($fixed.Count -gt 0) {
+        throw "Existing replacement is duplicated or misplaced for $Description in $Path."
+    }
     if ($matches.Count -ne 1) {
         throw "Patch anchor failed for $Description in $Path. Expected 1 match, found $($matches.Count)."
     }
@@ -217,6 +228,15 @@ function Insert-AfterOnce {
     $matches = $regex.Matches($text)
     if ($matches.Count -ne 1) {
         throw "Patch insertion anchor failed for $Description in $Path. Expected 1 match, found $($matches.Count)."
+    }
+    $insertedPattern = [regex]::Escape($Insertion.Replace("`r`n", "`n")).Replace('\n', '\r?\n')
+    $inserted = [regex]::Matches($text, $insertedPattern)
+    if ($inserted.Count -eq 1 -and $inserted[0].Index -eq $matches[0].Index + $matches[0].Length) {
+        Write-Host "Kept: $Description"
+        return
+    }
+    if ($inserted.Count -gt 0) {
+        throw "Existing insertion is duplicated or misplaced for $Description in $Path."
     }
 
     $newText = $regex.Replace(
@@ -790,6 +810,8 @@ Assert-NotContains -Path $loginServerE2ePath -Needle 'const FALLBACK_LOGIN_PORT:
 
 & python (Join-Path $PSScriptRoot 'patch-codex-no-daemon.py') --source-root $SourceRoot
 if ($LASTEXITCODE -ne 0) { throw 'Local daemon removal patch failed.' }
+& python (Join-Path $PSScriptRoot 'patch-guardian-section-content.py') --source-root $SourceRoot
+if ($LASTEXITCODE -ne 0) { throw 'Guardian SectionContent compatibility patch failed.' }
 
 Write-Host "Windows custom Codex patch verified."
 }
@@ -810,6 +832,12 @@ $patchInputs = @(
 $mcpRoot = Resolve-UpstreamMcpServerCrateRoot -CodexRsDir (Join-Path $SourceRoot 'codex-rs')
 if ($mcpRoot) { $patchInputs += @('codex-rs/mcp-server/Cargo.toml', 'codex-rs/mcp-server/src/lib.rs') }
 if (Test-Path -LiteralPath (Join-Path $SourceRoot 'codex-rs/cli/Cargo.toml')) { $patchInputs += 'codex-rs/cli/Cargo.toml' }
+if (Test-Path -LiteralPath (Join-Path $SourceRoot 'codex-rs/guardian-context/src/retained_instructions.rs')) {
+    $patchInputs += @('codex-rs/guardian-context/src/retained_instructions.rs', 'codex-rs/guardian-context/src/composition.rs')
+    if (Test-Path -LiteralPath (Join-Path $SourceRoot 'codex-rs/guardian-context/tests/cache_prefix.rs')) {
+        $patchInputs += @('codex-rs/guardian-context/tests/cache_prefix.rs', 'codex-rs/guardian-context/src/profile.rs')
+    }
+}
 Invoke-SourcePatchTransaction -SourceRoot $SourceRoot -RelativePaths $patchInputs -Patch {
     param($StagedRoot)
     Invoke-WindowsCustomPatch -SourceRoot $StagedRoot

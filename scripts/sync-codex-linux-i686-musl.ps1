@@ -912,6 +912,8 @@ if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
 }
 
 $codexRsDir = Join-Path $sourceDir "codex-rs"
+& python3 (Join-Path $PSScriptRoot 'patch-guardian-section-content.py') --source-root $sourceDir
+if ($LASTEXITCODE -ne 0) { throw 'Guardian SectionContent compatibility patch failed.' }
 & python3 (Join-Path $PSScriptRoot 'patch-codex-no-daemon.py') --source-root $sourceDir
 if ($LASTEXITCODE -ne 0) { throw 'Local daemon removal patch failed.' }
 $cliCargoTomlPath = Join-Path $codexRsDir "cli/Cargo.toml"

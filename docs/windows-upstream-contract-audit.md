@@ -18,6 +18,7 @@ upstream redesigns can be predicted or safely rewritten automatically.
 | OpenAI metadata | Keep internal classifications while removing only unsupported content_item_kinds from OpenAI requests; preserve turn_id/create_time | Required method/call/assertion drift fails. The exact upstream request test must exist, execute and pass. A future provider schema rollout or removal of this field requires an intentional contract update, not broad metadata deletion. |
 | Debug and protocol | Discover existing debug variants; generate/parse emitted schemas; register canonical, legacy, namespaced, deferred and nullable tools; reject invalid definitions | Changed enum or protocol shapes fail fresh runtime gates. Registration and selected upstream dynamic-tool tests do not prove compatibility of every future tool schema or RPC method. |
 | Required Cargo regressions | Exact request-metadata test and dynamic-tool test prefix are enumerated before execution | Zero selected tests, mismatched exact selection, ignored tests, missing/changed result summaries or failure stop the build. Test selection evidence is bundled in the package. |
+| Guardian context type migration | Four reviewed retained-context expressions are wrapped as `SectionContent::Other`; one stale integration-test call uses `prepare_transcript` | Unknown/duplicate expressions or changed container/API definitions fail before source writes. All Guardian unit and integration tests must compile and pass without ignored tests; the first repaired revision passes 45 unit and two integration tests. |
 | Rust recursion limits | Raise lower limits to 256 and preserve higher upstream limits | Missing or duplicate limits fail verification. Real Windows compilation remains required; a recursion limit does not guarantee compatibility with future Rust language/compiler changes. |
 | V8 build artifacts | Locked version and target-specific archive/bindings; additional checksum entries are accepted | Required hashes must exist exactly once; malformed/duplicate entries and digest mismatches fail. Multiple locked V8 versions, changed graph/profile/asset naming, removed dependencies or unavailable assets still need review. |
 | Package and executable identity | Use upstream builder; require reviewed layout/version/target/variant/paths; verify all five packaged input hashes | A changed package layout or changed/missing executable fails before publication. Installer script, .NET companion, host help, protocol and daemon-free packaged runtime checks remain release gates. New architectures or package-layout versions require coordinated support. |
@@ -58,6 +59,31 @@ the release contract.
 Fast coverage is in `test-windows-ripgrep.ps1` and
 `test-no-daemon-runtime-contracts.py`. Hosted publication still requires a
 fresh native release build and both packaged runtime probes.
+
+The subsequent [native run 37603163416](https://github.com/adybag14-cyber/codex-cli-sync/actions/runs/37603163416/job/112732192972)
+passed dependency acquisition but exposed a new upstream compiler error in
+`guardian-context/src/retained_instructions.rs` at `5b0b253`: bare `ContentItem`
+patterns and iterator elements no longer matched `SectionContent`. Compiling
+the whole crate also found one test using the old `render_transcript` method.
+The compatibility bridge corrects these types/API calls without changing retained
+text, source metadata, omission policy, section order or approval semantics.
+Eight bridge contracts and an additional full-transaction late-failure scenario
+cover idempotence, CRLF, partial fixes and rejection without partial writes.
+Native Guardian tests now run on the pinned failure and live main, so a green
+source-rewrite check alone cannot conceal this compiler failure.
+
+Upstream subsequently fixed the same migration in
+[`a513012`](https://github.com/openai/codex/commit/a5130128697b10022a88e8f5eae6dca77393b4b0),
+using the existing `From<String> for SectionContent` conversion for framing.
+That reviewed layout is an explicit no-op case, with its own pinned source
+snapshot and byte-identity regression, rather than another downstream rewrite.
+
+Replay validation also exposed duplicate sanitizer/guard insertion when the
+complete Windows patch was applied twice. The generic insertion and replacement
+helpers now recognize the complete installed edit at its expected anchor,
+including replacements that retain their original anchor. Duplicate or misplaced
+edits fail instead of accumulating more copies. Eight additional LF/CRLF
+contracts and byte-for-byte full-patch replay run across the source matrix.
 
 The supported response to an unfamiliar structural or semantic change is to
 stop publication, inspect the exact upstream change, update the transformation
