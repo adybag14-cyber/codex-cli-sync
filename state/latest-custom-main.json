@@ -1,27 +1,27 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "dab2cd60568dedac5b226e9fafdf1523474d5cb8",
-  "custom_version": "0.161.0-202610061117",
+  "upstream_sha": "0e1520605f67969b58e53762be4d675c036a981d",
+  "custom_version": "0.162.0-202610071524",
   "version_resolution": {
-    "custom_version": "0.161.0-202610061117",
-    "base_version": "0.161.0",
+    "custom_version": "0.162.0-202610071524",
+    "base_version": "0.162.0",
     "source": "next_minor_after_latest_stable_tag",
-    "latest_stable_tag": "rust-v0.160.1",
+    "latest_stable_tag": "rust-v0.161.0",
     "upstream_workspace_version": "0.0.0",
     "upstream_ref": "main",
-    "timestamp_utc": "2026-10-06T11:17:53.9546054Z"
+    "timestamp_utc": "2026-10-07T15:24:42.3266012Z"
   },
-  "build_recipe_sha256": "156f41d4ade3f498da9bbf855020e87b24a312c18b4504537beb65574e30a2cf",
+  "build_recipe_sha256": "56df477982870710b3fa2a59155b95eac2b8829335439066ecc0e0ee31fb8787",
   "windows_target": "x86_64-pc-windows-msvc",
-  "generated_at_utc": "2026-10-06T11:17:46.9735605Z",
-  "release_tag": "custom-windows-x64-dab2cd60568d",
+  "generated_at_utc": "2026-10-07T15:24:35.3016172Z",
+  "release_tag": "custom-windows-x64-0e1520605f67",
   "rolling_tag": "latest-windows-x64-custom",
   "patch_status": "applied",
   "custom_patches_failed": false,
   "artifact": {
-    "name": "codex-windows-x64-custom-dab2cd60568d.zip",
-    "sha256": "d47ae52928ad7dcff3fd6988d646274255dac09af2115e054119d2204b4f0040"
+    "name": "codex-windows-x64-custom-0e1520605f67.zip",
+    "sha256": "98c415e7374d9189f78a9e02371f38a73e8989475a512ba1578509b6743c0172"
   },
   "patch_contract": {
     "local_daemon": "Disabled: embedded local TUI, no implicit attachment, lifecycle and updater rejected",
@@ -40,6 +40,12 @@
     "tool_schema_compatibility": "Native app-server RPC checks for canonical, legacy, namespaced, nullable, and sanitizable dynamic tool schemas; invalid definitions remain rejected",
     "sync_doctor": "Self-contained .NET companion inspects browser policy and repairs legacy package layout using the upstream generator; no browser security modifications"
   },
+  "ripgrep": {
+    "release_tag": "15.2.0",
+    "asset_name": "ripgrep-15.2.0-x86_64-pc-windows-msvc.zip",
+    "archive_sha256": "71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5",
+    "executable_sha256": "14231169855ec5205cf5a1b6f1db358ff4aed4247c86b69ce8aae647c77f6680"
+  },
   "rusty_v8": {
     "version": "150.4.0",
     "release_tag": "rusty-v8-v150.4.0",
@@ -50,11 +56,11 @@
   },
   "release_files": [
     {
-      "name": "codex-windows-x64-custom-dab2cd60568d.zip",
-      "sha256": "d47ae52928ad7dcff3fd6988d646274255dac09af2115e054119d2204b4f0040"
+      "name": "codex-windows-x64-custom-0e1520605f67.zip",
+      "sha256": "98c415e7374d9189f78a9e02371f38a73e8989475a512ba1578509b6743c0172"
     },
     {
-      "name": "codex-windows-x64-custom-dab2cd60568d.manifest.json",
+      "name": "codex-windows-x64-custom-0e1520605f67.manifest.json",
       "sha256": null
     },
     {
