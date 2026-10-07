@@ -399,6 +399,9 @@ try {
         $env:RUST_MIN_STACK = "8388608"
         $env:RUSTY_V8_ARCHIVE = $rustyV8Artifacts.ArchivePath
         $env:RUSTY_V8_SRC_BINDING_PATH = $rustyV8Artifacts.BindingPath
+        if (Test-Path -LiteralPath (Join-Path $sourceDir 'codex-rs/guardian-context/Cargo.toml')) {
+            & (Join-Path $scriptRoot 'test-guardian-context.ps1') -SourceRoot $sourceDir -ReportPath (Join-Path $WorkspaceDir 'guardian-test-selection.json')
+        }
         Invoke-CargoContractTest -Package codex-core -Filter $compatibilityTest -Exact `
             -ReportPath (Join-Path $WorkspaceDir 'request-metadata-test-selection.json')
         # Exercise actual dynamic tool calls and content responses against the upstream mock server.
@@ -467,6 +470,9 @@ $packageLayout = New-WindowsCodexPackage -SourceRoot $sourceDir -BinaryDir $targ
     -RipgrepPath $ripgrepPath -Destination $payloadRoot -Version $customVersion -Target $WindowsTarget
 Copy-Item -LiteralPath (Join-Path $WorkspaceDir 'request-metadata-test-selection.json') -Destination $payloadRoot
 Copy-Item -LiteralPath (Join-Path $WorkspaceDir 'dynamic-tool-test-selection.json') -Destination $payloadRoot
+if (Test-Path -LiteralPath (Join-Path $sourceDir 'codex-rs/guardian-context/Cargo.toml')) {
+    Copy-Item -LiteralPath (Join-Path $WorkspaceDir 'guardian-test-selection.json') -Destination $payloadRoot
+}
 Set-Content -Path (Join-Path $payloadRoot "VERSION.txt") -Value ($customVersion + "`n") -Encoding utf8
 
 $upstreamInstaller = Join-Path $sourceDir "scripts\install\install.ps1"
