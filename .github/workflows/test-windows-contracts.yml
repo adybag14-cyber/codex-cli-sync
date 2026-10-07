@@ -35,6 +35,7 @@ jobs:
           - 41f9084b30812db321a0b592def4f500d1e79cf4
           - b65ab465cefa7b89c68317366b67e44431b90af4
           - b741e480e203f037ca726bc2a76d99a8e8668e66
+          - 5b0b2530354052b9194156d70d4c94a439368342
           - main
     steps:
       - uses: actions/checkout@v6
@@ -82,7 +83,9 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Check PowerShell Compatibility Contracts
         shell: pwsh
-        run: ./scripts/test-upstream-compatibility.ps1
+        run: |
+          ./scripts/test-upstream-compatibility.ps1
+          ./scripts/test-windows-ripgrep.ps1
       - name: Check Windows CLI Runtime Probe Contracts
         shell: pwsh
         run: |
@@ -90,6 +93,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows CLI runtime probe contracts failed.' }
           python scripts/test-no-daemon-patch.py
           if ($LASTEXITCODE -ne 0) { throw 'Local daemon patch contracts failed.' }
+          python scripts/test-no-daemon-runtime-contracts.py
+          if ($LASTEXITCODE -ne 0) { throw 'Daemon-free fixture contracts failed.' }
 
       - name: Check Out Verified Upstream Packaging Source
         uses: actions/checkout@v6

@@ -68,6 +68,15 @@ Manual `workflow_dispatch` runs expose `force`, `upstream_ref`, `run_target`, an
 
 Release publishing is handled by [`scripts/publish-github-release.ps1`](scripts/publish-github-release.ps1) through the GitHub Releases API and the repo-scoped `GITHUB_TOKEN`.
 
+Windows packaging resolves ripgrep **before** Cargo tests and compilation. The
+GitHub API request uses `GH_TOKEN` or `GITHUB_TOKEN` when provided; Actions passes
+its repository token explicitly. Release downloads receive no bearer token.
+Exactly one Windows asset and its published SHA-256 are required. Cached ZIPs
+are rehashed before reuse, corrupt downloads cannot replace the packaged tool,
+and the release manifest records the ripgrep version and archive/executable hashes.
+This prevents an API rate limit discovered after a long successful Rust build
+from being mistaken for a Windows source-patch failure.
+
 ## Automatic Windows custom version
 
 [`scripts/Resolve-CodexCustomVersion.ps1`](scripts/Resolve-CodexCustomVersion.ps1)
@@ -143,7 +152,13 @@ python scripts/test-no-daemon-runtime.py --codex <fresh-codex-binary> --output o
 
 Windows interactive testing requires `pywinpty`; Linux uses the standard-library
 PTY implementation. The fixture creates and removes its own isolated home and
-workspace. It never uses the user's credentials.
+workspace. It never uses the user's credentials. Unrelated plugin downloads are
+disabled in this fixture, while `daemon_auto_start = true` and the normal local
+TUI path remain under test. Shutdown first requests `/exit`, waits for the owned
+terminal to exit, then retries transient Windows cleanup locks for at most ten
+seconds. Permanent cleanup errors still fail the run. The JSON report preserves
+the smoke result and cleanup error separately, and Actions uploads diagnostic
+reports even when packaging fails.
 
 ## Historical daemon fixture
 
