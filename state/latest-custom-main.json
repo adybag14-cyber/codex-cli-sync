@@ -1,27 +1,27 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "e790ce271749ce431e446a9e2cc66485fe60f931",
-  "custom_version": "0.164.0-202610160440",
+  "upstream_sha": "4eb4a65407d98cebc4c83bf13be440b9fbc78a7c",
+  "custom_version": "0.164.0-202610161316",
   "version_resolution": {
-    "custom_version": "0.164.0-202610160440",
+    "custom_version": "0.164.0-202610161316",
     "base_version": "0.164.0",
     "source": "next_minor_after_latest_stable_tag",
     "latest_stable_tag": "rust-v0.163.0",
     "upstream_workspace_version": "0.0.0",
     "upstream_ref": "main",
-    "timestamp_utc": "2026-10-16T04:40:25.7725193Z"
+    "timestamp_utc": "2026-10-16T13:16:54.5793977Z"
   },
   "build_recipe_sha256": "56df477982870710b3fa2a59155b95eac2b8829335439066ecc0e0ee31fb8787",
   "windows_target": "x86_64-pc-windows-msvc",
-  "generated_at_utc": "2026-10-16T04:40:16.7547561Z",
-  "release_tag": "custom-windows-x64-e790ce271749",
+  "generated_at_utc": "2026-10-16T13:16:47.3117742Z",
+  "release_tag": "custom-windows-x64-4eb4a65407d9",
   "rolling_tag": "latest-windows-x64-custom",
   "patch_status": "applied",
   "custom_patches_failed": false,
   "artifact": {
-    "name": "codex-windows-x64-custom-e790ce271749.zip",
-    "sha256": "689b997157bc8d771ca3f68cb2cc3d80c5812b2d5bd549fd17ad8c6b2fe52737"
+    "name": "codex-windows-x64-custom-4eb4a65407d9.zip",
+    "sha256": "1a8e842cfacf7eb94462c37188e51757bc33c6e6f69dc26811be94a37f637b08"
   },
   "patch_contract": {
     "local_daemon": "Disabled: embedded local TUI, no implicit attachment, lifecycle and updater rejected",
@@ -47,20 +47,20 @@
     "executable_sha256": "14231169855ec5205cf5a1b6f1db358ff4aed4247c86b69ce8aae647c77f6680"
   },
   "rusty_v8": {
-    "version": "150.4.0",
-    "release_tag": "rusty-v8-v150.4.0",
+    "version": "152.2.0",
+    "release_tag": "rusty-v8-v152.2.0",
     "archive_name": "rusty_v8_ptrcomp_sandbox_release_x86_64-pc-windows-msvc.lib.gz",
-    "archive_sha256": "732ec5da4243aa166799780c8519a5eea6f32f6e47657a323342794dc3c239d6",
+    "archive_sha256": "cd829415695b30ad61b306b23a381e11276f14bb0b46815ac5ed8b96711d002d",
     "binding_name": "src_binding_ptrcomp_sandbox_release_x86_64-pc-windows-msvc.rs",
-    "binding_sha256": "dabf78ba1faac127660db9862b1d0354175c71b8db2d4fcb5bacbd9c93576b16"
+    "binding_sha256": "572ed16ff09bb7944f4b35c659ff62dcd3faf43a0351e3f94f011e01b2f92a62"
   },
   "release_files": [
     {
-      "name": "codex-windows-x64-custom-e790ce271749.zip",
-      "sha256": "689b997157bc8d771ca3f68cb2cc3d80c5812b2d5bd549fd17ad8c6b2fe52737"
+      "name": "codex-windows-x64-custom-4eb4a65407d9.zip",
+      "sha256": "1a8e842cfacf7eb94462c37188e51757bc33c6e6f69dc26811be94a37f637b08"
     },
     {
-      "name": "codex-windows-x64-custom-e790ce271749.manifest.json",
+      "name": "codex-windows-x64-custom-4eb4a65407d9.manifest.json",
       "sha256": null
     },
     {
