@@ -732,15 +732,20 @@ function Remove-StaleRustyV8GnOutput {
 function Enable-I686MuslLinuxSandboxSyscallBuild {
     param([Parameter(Mandatory = $true)][string]$CodexRsDir)
 
-    $landlockPath = Join-Path $CodexRsDir "linux-sandbox/src/landlock.rs"
-    if (-not (Test-Path -LiteralPath $landlockPath -PathType Leaf)) {
-        throw "Required linux sandbox file not found: $landlockPath"
+    # Upstream moved these primitives from landlock.rs to seccomp.rs in October.
+    # Reject ambiguous/unknown layouts rather than silently skipping syscall widening.
+    $candidates = @('linux-sandbox/src/landlock.rs', 'linux-sandbox/src/seccomp.rs') |
+        ForEach-Object { Join-Path $CodexRsDir $_ } |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+    if (@($candidates).Count -ne 1) {
+        throw 'Linux sandbox syscall source: require exactly one reviewed landlock.rs or seccomp.rs file.'
     }
+    $landlockPath = @($candidates)[0]
 
     $text = [System.IO.File]::ReadAllText($landlockPath)
     $originalText = $text
 
-    $text = $text.Replace(
+    $text = $text.Replace("`r`n", "`n").Replace(
         @'
     fn deny_syscall(rules: &mut BTreeMap<i64, Vec<SeccompRule>>, nr: i64) {
         rules.insert(nr, vec![]); // empty rule vec = unconditional match
@@ -756,13 +761,23 @@ function Enable-I686MuslLinuxSandboxSyscallBuild {
 '@
     )
 
-    $text = $text.Replace(
-        "            deny_syscall(&mut rules, libc::SYS_accept);",
-        @'
-            #[cfg(not(all(target_arch = "x86", target_env = "musl")))]
-            deny_syscall(&mut rules, libc::SYS_accept);
-'@
-    )
+    $acceptGuard = '            #[cfg(not(all(target_arch = "x86", target_env = "musl")))]'
+    $acceptCall = '            deny_syscall(&mut rules, libc::SYS_accept);'
+    $guardedAccept = $acceptGuard + "`n" + $acceptCall
+    if (-not $text.Contains($guardedAccept)) {
+        $text = $text.Replace(
+            $acceptCall,
+            $guardedAccept
+        )
+    }
+    if ([regex]::Matches($text, 'libc::SYS_accept\b').Count -ne
+        [regex]::Matches($text, [regex]::Escape($guardedAccept)).Count) {
+        throw "Linux sandbox syscall SYS_accept guard has an unsupported layout in $landlockPath"
+    }
+    if ($text -notmatch 'fn deny_syscall<T>\(rules: &mut BTreeMap<i64, Vec<SeccompRule>>, nr: T\)' -or
+        $text -notmatch 'T: Into<i64>' -or -not $text.Contains('rules.insert(nr.into(), vec![]);')) {
+        throw "Linux sandbox syscall helper has an unsupported layout in $landlockPath"
+    }
 
     # Normalize the map key independently of the rule value. Upstream adds and
     # renames network modes (including AF_VSOCK restrictions), but every socket
@@ -777,8 +792,9 @@ function Enable-I686MuslLinuxSandboxSyscallBuild {
         throw "Linux sandbox socket syscall keys were not all normalized in $landlockPath"
     }
 
-    if ($text -eq $originalText) {
-        throw "Linux sandbox syscall compatibility patch did not change $landlockPath"
+    if ($originalText.Contains("`r`n")) { $text = $text.Replace("`n", "`r`n") }
+    if ($text -ceq $originalText) {
+        return $false
     }
 
     [System.IO.File]::WriteAllText(
@@ -916,6 +932,8 @@ $codexRsDir = Join-Path $sourceDir "codex-rs"
 if ($LASTEXITCODE -ne 0) { throw 'Guardian SectionContent compatibility patch failed.' }
 & python3 (Join-Path $PSScriptRoot 'patch-codex-no-daemon.py') --source-root $sourceDir
 if ($LASTEXITCODE -ne 0) { throw 'Local daemon removal patch failed.' }
+& python3 (Join-Path $PSScriptRoot 'patch-openai-request-metadata.py') --source-root $sourceDir
+if ($LASTEXITCODE -ne 0) { throw 'OpenAI request metadata compatibility patch failed.' }
 $cliCargoTomlPath = Join-Path $codexRsDir "cli/Cargo.toml"
 # Inspect pristine upstream manifests before target-specific compatibility edits.
 # Those edits intentionally diverge Cargo.toml from Cargo.lock and therefore must
@@ -1173,6 +1191,12 @@ $manifest = [ordered]@{
     rusty_v8_required_by_codex_cli = [bool]$codexCliUsesRustyV8
     compatibility_patches      = @(
         [ordered]@{
+            name    = "openai_request_content_metadata_compatibility"
+            applied = $true
+            reason  = "OpenAI endpoints reject newer content classification and attribution fields."
+            effect  = "Request copies omit content_item_kinds and content_item_metadata while preserving internal history, turn IDs and creation times."
+        },
+        [ordered]@{
             name    = "build_rusty_v8_from_source_for_i686_musl"
             applied = [bool]$rustyV8BuiltFromSource
             reason  = $rustyV8Reason
@@ -1252,6 +1276,7 @@ $manifest = [ordered]@{
         rusty_v8_archive_path = $v8ArchivePath
         rusty_v8_archive_member_file_output = $v8ObjectFileOutput
         linux_sandbox_syscalls_patched_for_i686_musl = [bool]$patchedLinuxSandboxSyscalls
+        openai_request_metadata_sanitized = $true
         openssl_no_c11_atomics_for_i686_musl = $true
         openssl_broken_clang_atomics_for_i686_musl = $true
         openssl_sys_cleaned_for_i686_musl = $true

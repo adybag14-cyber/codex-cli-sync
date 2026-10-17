@@ -33,6 +33,8 @@ on:
     paths:
       - .github/workflows/sync-codex-windows-custom.yml
       - scripts/patch-codex-windows-custom.ps1
+      - scripts/patch-openai-request-metadata.py
+      - scripts/test-openai-request-metadata.py
       - scripts/patch-codex-no-daemon.py
       - scripts/patch-guardian-section-content.py
       - scripts/test-guardian-section-content.py
@@ -127,6 +129,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Daemon-free fixture contracts failed.' }
           python scripts/test-guardian-section-content.py
           if ($LASTEXITCODE -ne 0) { throw 'Guardian compatibility contracts failed.' }
+          python scripts/test-openai-request-metadata.py
+          if ($LASTEXITCODE -ne 0) { throw 'OpenAI metadata contracts failed.' }
 
       - name: Restore Cargo Cache
         id: cargo-cache-restore
@@ -405,6 +409,8 @@ jobs:
           ./scripts/test-upstream-compatibility.ps1
           python3 scripts/test-guardian-section-content.py
           if ($LASTEXITCODE -ne 0) { throw 'Guardian compatibility contracts failed.' }
+          python3 scripts/test-openai-request-metadata.py
+          if ($LASTEXITCODE -ne 0) { throw 'OpenAI metadata contracts failed.' }
 
       - name: Prepare Linux i686 Build Tools
         shell: bash

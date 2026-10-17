@@ -665,54 +665,8 @@ if (-not (Set-ConfigPermissionsForWindowsCustom -Path $configPath)) {
 
 Set-LoginCallbackPortForWindowsCustom -ServerPath $loginServerPath -TestPath $loginServerE2ePath
 
-Insert-AfterOnce `
-    -Path $protocolModelsPath `
-    -Pattern 'pub fn clear_internal_chat_message_metadata_passthrough\(&mut self\) \{\r?\n\s*if let Some\(metadata\) = self\.internal_chat_message_metadata_passthrough_mut\(\) \{\r?\n\s*\*metadata = None;\r?\n\s*\}\r?\n\s*\}' `
-    -Insertion @'
-
-
-    /// Removes content classifications before sending items to an OpenAI endpoint that has not
-    /// rolled out support for this newer internal metadata member. Other approved passthrough
-    /// metadata, including turn IDs and creation times, remains intact.
-    pub fn clear_internal_chat_message_content_item_kinds(&mut self) {
-        if let Some(Some(metadata)) = self.internal_chat_message_metadata_passthrough_mut() {
-            metadata.content_item_kinds = None;
-        }
-    }
-'@ `
-    -Description "add a narrow OpenAI content-item metadata sanitizer"
-
-Replace-Once `
-    -Path $clientPath `
-    -Pattern '(?m)^        if !is_openai \{' `
-    -Replacement @'
-        if is_openai {
-            for item in &mut input {
-                // codex-cli-sync: keep internal annotations in history, but omit the newer
-                // content_item_kinds member until the OpenAI request schema accepts it.
-                item.clear_internal_chat_message_content_item_kinds();
-            }
-        }
-        if !is_openai {
-'@ `
-    -Description "omit unsupported content_item_kinds from OpenAI request payloads"
-
-Insert-AfterOnce `
-    -Path $clientTestPath `
-    -Pattern 'assert_eq!\(item_turn_id\("turn two"\), Some\(second_turn_id\)\);' `
-    -Insertion @'
-
-
-    for item in first_input.iter().chain(second_input.iter()) {
-        assert!(
-            item["internal_chat_message_metadata_passthrough"]
-                .get("content_item_kinds")
-                .is_none(),
-            "OpenAI request item must omit unsupported content_item_kinds metadata: {item}"
-        );
-    }
-'@ `
-    -Description "verify OpenAI requests omit unsupported content-item metadata"
+& python (Join-Path $PSScriptRoot 'patch-openai-request-metadata.py') --source-root $SourceRoot
+if ($LASTEXITCODE -ne 0) { throw 'OpenAI request metadata compatibility patch failed.' }
 
 # The original elevated-sandbox NUX kill switch was removed upstream in July 2026.
 # Keep supporting older revisions, but patch the active startup and onboarding
@@ -799,10 +753,9 @@ Assert-Contains -Path $loginServerE2ePath -Needle 'const DEFAULT_LOGIN_PORT: u16
 Assert-Contains -Path $loginServerE2ePath -Needle 'const FALLBACK_LOGIN_PORT: u16 = 1457;' -Description "registered fallback login callback test port"
 Assert-Contains -Path $loginServerPath -Needle 'io::ErrorKind::PermissionDenied' -Description "login callback access-denied fallback"
 Assert-Contains -Path $sessionPath -Needle 'content_item_kinds: Some(content_item_kinds)' -Description "internal content annotations preserved"
-Assert-Contains -Path $protocolModelsPath -Needle 'pub fn clear_internal_chat_message_content_item_kinds(&mut self)' -Description "content-item metadata sanitizer"
-Assert-Contains -Path $protocolModelsPath -Needle 'metadata.content_item_kinds = None;' -Description "content-item metadata removal"
-Assert-Contains -Path $clientPath -Needle 'item.clear_internal_chat_message_content_item_kinds();' -Description "OpenAI request metadata sanitization"
-Assert-Contains -Path $clientTestPath -Needle 'OpenAI request item must omit unsupported content_item_kinds metadata' -Description "OpenAI request metadata regression coverage"
+Assert-Contains -Path $protocolModelsPath -Needle 'pub fn clear_content_item_kinds(&mut self)' -Description "upstream content-item metadata sanitizer"
+Assert-Contains -Path $clientPath -Needle 'item.clear_content_item_kinds();' -Description "OpenAI request metadata sanitization"
+Assert-Contains -Path $clientTestPath -Needle 'OpenAI request item must omit unsupported {field} metadata' -Description "OpenAI request metadata regression coverage"
 Assert-NotContains -Path $loginServerPath -Needle 'const DEFAULT_PORT: u16 = 16455;' -Description "unregistered login callback default port"
 Assert-NotContains -Path $loginServerPath -Needle 'const FALLBACK_PORT: u16 = 0;' -Description "unregistered port-zero login callback fallback"
 Assert-NotContains -Path $loginServerE2ePath -Needle 'const DEFAULT_LOGIN_PORT: u16 = 16455;' -Description "unregistered login callback test default port"

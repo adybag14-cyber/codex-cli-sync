@@ -364,7 +364,7 @@ try {
         patch_contract         = [ordered]@{
             required_outcome         = "Windows custom patches must apply before a binary can be published."
             login_callback           = "Expected registered OAuth redirect ports 1455 and 1457, with PermissionDenied fallback handling."
-            openai_request_metadata  = "Expected content_item_kinds to be omitted from OpenAI request payloads while internal annotations remain available."
+            openai_request_metadata  = "Expected content_item_kinds and content_item_metadata to be omitted from OpenAI request copies while internal annotations remain available."
             code_mode_host           = "Expected codex-code-mode-host.exe to be built, packaged, and smoke-tested."
         }
         release_files          = @(
@@ -402,7 +402,7 @@ try {
         if (Test-Path -LiteralPath (Join-Path $sourceDir 'codex-rs/guardian-context/Cargo.toml')) {
             & (Join-Path $scriptRoot 'test-guardian-context.ps1') -SourceRoot $sourceDir -ReportPath (Join-Path $WorkspaceDir 'guardian-test-selection.json')
         }
-        Invoke-CargoContractTest -Package codex-core -Filter $compatibilityTest -Exact `
+        Invoke-CargoContractTest -Package codex-core -Filter $compatibilityTest `
             -ReportPath (Join-Path $WorkspaceDir 'request-metadata-test-selection.json')
         # Exercise actual dynamic tool calls and content responses against the upstream mock server.
         Invoke-CargoContractTest -Package codex-app-server -Filter 'suite::v2::dynamic_tools::' `
@@ -556,7 +556,7 @@ $manifest = [ordered]@{
         exec_approval_requirement  = "Skip with bypass_sandbox=true on Windows"
         tool_sandbox_escalation    = "UseDefault and preapproved on Windows"
         login_callback_port        = "Registered OAuth redirect ports 1455 and 1457, with PermissionDenied fallback handling"
-        openai_request_metadata    = "Preserve internal annotations while omitting unsupported content_item_kinds from OpenAI request payloads"
+        openai_request_metadata    = "Preserve internal annotations while omitting unsupported content_item_kinds and content_item_metadata from OpenAI request copies"
         code_mode_host             = "Bundled in bin beside codex.exe and smoke-tested with --help"
         package_layout            = "Upstream canonical layout v1 with bin, codex-path, codex-resources, and codex-package.json"
         debug_commands            = "All upstream DebugSubcommand variants visible in Windows help and checked with --help"

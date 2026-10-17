@@ -98,6 +98,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Daemon-free fixture contracts failed.' }
           python scripts/test-guardian-section-content.py
           if ($LASTEXITCODE -ne 0) { throw 'Guardian compatibility contracts failed.' }
+          python scripts/test-openai-request-metadata.py
+          if ($LASTEXITCODE -ne 0) { throw 'OpenAI metadata contracts failed.' }
 
       - name: Check Out Verified Upstream Packaging Source
         uses: actions/checkout@v6
