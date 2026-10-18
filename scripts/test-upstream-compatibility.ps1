@@ -25,7 +25,7 @@ foreach ($functionName in @('Get-Text', 'Set-Text', 'Replace-Once', 'Insert-Afte
 $linuxAst = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot "sync-codex-linux-i686-musl.ps1"), [ref]$patchTokens, [ref]$patchErrors)
 if ($patchErrors.Count) { throw "Linux sync script has syntax errors: $patchErrors" }
-foreach ($functionName in @('Ensure-RustCrateRecursionLimit', 'Enable-I686MuslLinuxSandboxSyscallBuild')) {
+foreach ($functionName in @('Ensure-RustCrateRecursionLimit', 'Enable-I686MuslLinuxSandboxSyscallBuild', 'Get-I686MuslLzmaBuildOutputs')) {
     $definition = $linuxAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
     if (-not $definition) { throw "Missing Linux patch function $functionName" }
     . ([ScriptBlock]::Create($definition.Extent.Text))
@@ -606,43 +606,43 @@ $($case.Signature)
     }
 '@
     foreach ($sandboxPath in @('linux-sandbox/src/landlock.rs', 'linux-sandbox/src/seccomp.rs')) {
-    foreach ($rule in @(
-        @{ Syscall = 'socket'; Payload = 'deny_vsock.clone()' },
-        @{ Syscall = 'socketpair'; Payload = 'deny_vsock' },
-        @{ Syscall = 'socket'; Payload = 'unix_only_rule.clone()' },
-        @{ Syscall = 'socketpair'; Payload = 'unix_only_rule' },
-        @{ Syscall = 'socket'; Payload = 'deny_non_ip_socket' },
-        @{ Syscall = 'socketpair'; Payload = 'deny_unix_socketpair' },
-        @{ Syscall = 'socketpair'; Payload = 'deny_non_unix_socketpair' },
-        @{ Syscall = 'socket'; Payload = 'renamed_rule.clone(), another_rule' }
-    )) {
-        foreach ($multiline in @($false, $true)) {
-            $key = 'libc::SYS_' + $rule.Syscall
-            $call = if ($multiline) {
-                "            rules.insert(`r`n                $key,`r`n                vec![$($rule.Payload)],`r`n            );"
-            } else {
-                "            rules.insert($key, vec![$($rule.Payload)]);"
+        foreach ($rule in @(
+            @{ Syscall = 'socket'; Payload = 'deny_vsock.clone()' },
+            @{ Syscall = 'socketpair'; Payload = 'deny_vsock' },
+            @{ Syscall = 'socket'; Payload = 'unix_only_rule.clone()' },
+            @{ Syscall = 'socketpair'; Payload = 'unix_only_rule' },
+            @{ Syscall = 'socket'; Payload = 'deny_non_ip_socket' },
+            @{ Syscall = 'socketpair'; Payload = 'deny_unix_socketpair' },
+            @{ Syscall = 'socketpair'; Payload = 'deny_non_unix_socketpair' },
+            @{ Syscall = 'socket'; Payload = 'renamed_rule.clone(), another_rule' }
+        )) {
+            foreach ($multiline in @($false, $true)) {
+                $key = 'libc::SYS_' + $rule.Syscall
+                $call = if ($multiline) {
+                    "            rules.insert(`r`n                $key,`r`n                vec![$($rule.Payload)],`r`n            );"
+                } else {
+                    "            rules.insert($key, vec![$($rule.Payload)]);"
+                }
+                $root = New-Layout -Name ("sandbox-syscall-" + $testCount) -Files @{
+                    $sandboxPath = ($syscallHelper + "`n" + '            deny_syscall(&mut rules, libc::SYS_accept);' + "`n" + $call)
+                }
+                Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root | Out-Null
+                $patched = [IO.File]::ReadAllText((Join-Path $root $sandboxPath))
+                if (-not $patched.Contains($call.Replace($key, "$key.into()"))) {
+                    throw "Syscall key was not widened while preserving the complete $($rule.Payload) rule"
+                }
+                if (-not $patched.Contains('#[cfg(not(all(target_arch = "x86", target_env = "musl")))]')) {
+                    throw 'The i686-musl SYS_accept exclusion was not applied'
+                }
+                if (Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root) {
+                    throw 'Already normalized syscall source changed on reapplication'
+                }
+                if ([IO.File]::ReadAllText((Join-Path $root $sandboxPath)) -cne $patched) {
+                    throw 'Syscall source bytes changed on reapplication'
+                }
+                $testCount++
             }
-            $root = New-Layout -Name ("sandbox-syscall-" + $testCount) -Files @{
-                $sandboxPath = ($syscallHelper + "`n" + '            deny_syscall(&mut rules, libc::SYS_accept);' + "`n" + $call)
-            }
-            Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root | Out-Null
-            $patched = [IO.File]::ReadAllText((Join-Path $root $sandboxPath))
-            if (-not $patched.Contains($call.Replace($key, "$key.into()"))) {
-                throw "Syscall key was not widened while preserving the complete $($rule.Payload) rule"
-            }
-            if (-not $patched.Contains('#[cfg(not(all(target_arch = "x86", target_env = "musl")))]')) {
-                throw 'The i686-musl SYS_accept exclusion was not applied'
-            }
-            if (Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root) {
-                throw 'Already normalized syscall source changed on reapplication'
-            }
-            if ([IO.File]::ReadAllText((Join-Path $root $sandboxPath)) -cne $patched) {
-                throw 'Syscall source bytes changed on reapplication'
-            }
-            $testCount++
         }
-    }
     }
     foreach ($files in @(
         @{},
@@ -735,6 +735,33 @@ $($case.Signature)
         Write-Host 'Verified Linux syscall compatibility against the selected upstream source.'
         $testCount++
     }
+
+    $target = 'i686-unknown-linux-musl'
+    foreach ($output in @(
+        '',
+        "cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu`ncargo:rustc-link-lib=lzma",
+        'cargo:rustc-link-lib=zstd',
+        "cargo:rustc-link-search=native=/build/target/lib`ncargo:rustc-link-lib=static=lzma"
+    )) {
+        $root = New-Layout -Name ("lzma-output-" + $testCount) -Files @{
+            "target/$target/release/build/lzma-sys-fixture/output" = $output
+        }
+        if (@(Get-I686MuslLzmaBuildOutputs -CodexRsDir $root -Target $target -Required $false).Count -ne 0) {
+            throw 'Unused lzma dependency consumed stale cached build output'
+        }
+        $rejected = $false
+        try { Get-I686MuslLzmaBuildOutputs -CodexRsDir $root -Target $target -Required $true | Out-Null }
+        catch { $rejected = $_.Exception.Message.StartsWith('lzma-sys') }
+        if ($rejected -eq $output.Contains('static=lzma')) { throw 'Lzma build output validation gave the wrong result' }
+        $testCount++
+    }
+    $root = New-Layout -Name 'lzma-no-output' -Files @{}
+    Get-I686MuslLzmaBuildOutputs -CodexRsDir $root -Target $target -Required $false | Out-Null
+    $rejected = $false
+    try { Get-I686MuslLzmaBuildOutputs -CodexRsDir $root -Target $target -Required $true | Out-Null }
+    catch { $rejected = $_.Exception.Message.StartsWith('lzma-sys build output was not produced') }
+    if (-not $rejected) { throw 'Required lzma dependency accepted a missing build output' }
+    $testCount++
 
     $remote = New-Layout -Name 'checkout-remote' -Files @{
         'codex-rs/Cargo.toml' = "[workspace]`nmembers = []`n"

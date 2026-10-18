@@ -805,6 +805,34 @@ function Enable-I686MuslLinuxSandboxSyscallBuild {
     return $true
 }
 
+function Get-I686MuslLzmaBuildOutputs {
+    param(
+        [Parameter(Mandatory = $true)][string]$CodexRsDir,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][bool]$Required
+    )
+    if (-not $Required) {
+        Write-Host 'codex-cli does not depend on lzma-sys; no target liblzma output is required.'
+        return
+    }
+    $outputs = @(
+        Get-ChildItem -LiteralPath (Join-Path $CodexRsDir "target/$Target/release/build") `
+            -Directory -Filter 'lzma-sys-*' -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName 'output' } |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+    )
+    if ($outputs.Count -eq 0) { throw "lzma-sys build output was not produced for $Target." }
+    $text = ($outputs | ForEach-Object { [IO.File]::ReadAllText($_) }) -join "`n"
+    if ($text -match '(?m)cargo:rustc-link-search=native=/(usr/)?lib/(x86_64|aarch64|i[3-6]86)-linux-gnu') {
+        throw "lzma-sys selected a host-architecture system library during the $Target cross build."
+    }
+    if ($text -notmatch '(?m)cargo:rustc-link-lib=(static=)?lzma') {
+        throw "lzma-sys did not report its bundled liblzma link contract for $Target."
+    }
+    Write-Host "Verified bundled target liblzma for $Target."
+    return $outputs
+}
+
 function Set-I686MuslBuildEnvironment {
     $env:OPENSSL_STATIC = "1"
     $env:AWS_LC_SYS_NO_JITTER_ENTROPY = "1"
@@ -941,6 +969,11 @@ $codexCliUsesRustyV8 = Test-CargoTransitiveDependency `
     -DependencyPackage 'v8' `
     -Target $LinuxTarget
 Write-ActionOutput -Name "rusty_v8_required" -Value ([string][bool]$codexCliUsesRustyV8).ToLowerInvariant()
+$codexCliUsesLzma = Test-CargoTransitiveDependency `
+    -CodexRsDir $codexRsDir `
+    -RootPackage 'codex-cli' `
+    -DependencyPackage 'lzma-sys' `
+    -Target $LinuxTarget
 $addedVendoredOpenSsl = Enable-I686MuslVendoredOpenSsl -CargoTomlPath $cliCargoTomlPath
 $enabledBlake3Pure = Enable-I686MuslBlake3PureFeature -CargoTomlPath $cliCargoTomlPath
 
@@ -1010,10 +1043,12 @@ try {
         throw "cargo clean for openssl-sys failed with exit code $LASTEXITCODE"
     }
 
-    Write-Host "Clearing cached lzma-sys artifacts so bundled i686 liblzma is rebuilt."
-    cargo clean --package lzma-sys --target $LinuxTarget
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo clean for lzma-sys failed with exit code $LASTEXITCODE"
+    if ($codexCliUsesLzma) {
+        Write-Host "Clearing cached lzma-sys artifacts so bundled i686 liblzma is rebuilt."
+        cargo clean --package lzma-sys --target $LinuxTarget
+        if ($LASTEXITCODE -ne 0) {
+            throw "cargo clean for lzma-sys failed with exit code $LASTEXITCODE"
+        }
     }
 
     cargo fetch --locked --target $LinuxTarget
@@ -1033,25 +1068,7 @@ try {
         throw "cargo zigbuild failed with exit code $LASTEXITCODE"
     }
 
-    $lzmaBuildOutputs = @(
-        Get-ChildItem -LiteralPath (Join-Path $codexRsDir "target/$LinuxTarget/release/build") `
-            -Directory -Filter 'lzma-sys-*' -ErrorAction SilentlyContinue |
-            ForEach-Object { Join-Path $_.FullName 'output' } |
-            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
-    )
-    if ($lzmaBuildOutputs.Count -eq 0) {
-        throw "lzma-sys build output was not produced for $LinuxTarget."
-    }
-    $lzmaBuildOutputText = ($lzmaBuildOutputs | ForEach-Object {
-        [System.IO.File]::ReadAllText($_)
-    }) -join "`n"
-    if ($lzmaBuildOutputText -match '(?m)cargo:rustc-link-search=native=/(usr/)?lib/(x86_64|aarch64|i[3-6]86)-linux-gnu') {
-        throw "lzma-sys selected a host-architecture system library during the $LinuxTarget cross build."
-    }
-    if ($lzmaBuildOutputText -notmatch '(?m)cargo:rustc-link-lib=(static=)?lzma') {
-        throw "lzma-sys did not report its bundled liblzma link contract for $LinuxTarget."
-    }
-    Write-Host "Verified bundled target liblzma for $LinuxTarget."
+    $lzmaBuildOutputs = @(Get-I686MuslLzmaBuildOutputs -CodexRsDir $codexRsDir -Target $LinuxTarget -Required $codexCliUsesLzma)
 } finally {
     Pop-Location
 }
@@ -1225,7 +1242,7 @@ $manifest = [ordered]@{
         },
         [ordered]@{
             name    = "build_bundled_liblzma_for_i686_musl"
-            applied = $env:LZMA_API_STATIC -eq "1" -and $env:LIBLZMA_NO_PKG_CONFIG -eq "1"
+            applied = $codexCliUsesLzma -and $env:LZMA_API_STATIC -eq "1" -and $env:LIBLZMA_NO_PKG_CONFIG -eq "1"
             reason  = "Cross-enabled pkg-config can select the Linux runner's x86_64 liblzma archive while linking the i686 musl executable."
             effect  = "lzma-sys compiles and links its bundled target liblzma, and the build rejects host-architecture search paths."
         }
@@ -1233,6 +1250,7 @@ $manifest = [ordered]@{
     build_adjustments          = [ordered]@{
         vendored_openssl_for_i686_musl = [bool]$addedVendoredOpenSsl
         blake3_pure_for_i686_musl = [bool]$enabledBlake3Pure
+        lzma_sys_required_by_codex_cli = [bool]$codexCliUsesLzma
         rusty_v8_required_by_codex_cli = [bool]$codexCliUsesRustyV8
         rusty_v8_built_from_source_for_i686_musl = [bool]$rustyV8BuiltFromSource
         rusty_v8_version = $rustyV8Version
@@ -1270,9 +1288,9 @@ $manifest = [ordered]@{
         openssl_no_c11_atomics_for_i686_musl = $true
         openssl_broken_clang_atomics_for_i686_musl = $true
         openssl_sys_cleaned_for_i686_musl = $true
-        lzma_sys_bundled_for_i686_musl = $env:LZMA_API_STATIC -eq "1"
+        lzma_sys_bundled_for_i686_musl = $codexCliUsesLzma -and $env:LZMA_API_STATIC -eq "1"
         lzma_sys_host_pkg_config_disabled = $env:LIBLZMA_NO_PKG_CONFIG -eq "1"
-        lzma_sys_cleaned_for_i686_musl = $true
+        lzma_sys_cleaned_for_i686_musl = [bool]$codexCliUsesLzma
         lzma_sys_build_outputs = @($lzmaBuildOutputs)
         cargo_build_jobs              = $env:CARGO_BUILD_JOBS
         ca_certificates_bundle_source  = $caCertPath
