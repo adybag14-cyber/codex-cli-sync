@@ -690,6 +690,26 @@ $($case.Signature)
         $testCount++
     }
 
+    $syscallDefinition = $linuxAst.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Enable-I686MuslLinuxSandboxSyscallBuild'
+    }, $false)
+    foreach ($newline in @("`n", "`r`n")) {
+        $root = New-Layout -Name ("sandbox-patcher-newlines-" + $testCount) -Files @{
+            'linux-sandbox/src/seccomp.rs' = ($syscallHelper.Replace("`r`n", "`n").Replace("`n", $newline) +
+                $newline + '            rules.insert(libc::SYS_socket, vec![deny_vsock]);')
+        }
+        & {
+            # Emulate checkout line endings in the patcher itself as well as Rust.
+            . ([ScriptBlock]::Create($syscallDefinition.Extent.Text.Replace("`r`n", "`n").Replace("`n", $newline)))
+            Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root | Out-Null
+            if (Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root) {
+                throw 'Syscall patcher newline variant is not idempotent'
+            }
+        }
+        $testCount++
+    }
+
     if ($SourceRoot) {
         $files = @{}
         foreach ($relative in @('linux-sandbox/src/landlock.rs', 'linux-sandbox/src/seccomp.rs')) {

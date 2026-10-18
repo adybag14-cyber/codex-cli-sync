@@ -745,13 +745,12 @@ function Enable-I686MuslLinuxSandboxSyscallBuild {
     $text = [System.IO.File]::ReadAllText($syscallPath)
     $originalText = $text
 
-    $text = $text.Replace("`r`n", "`n").Replace(
-        @'
+    $legacyHelper = @'
     fn deny_syscall(rules: &mut BTreeMap<i64, Vec<SeccompRule>>, nr: i64) {
         rules.insert(nr, vec![]); // empty rule vec = unconditional match
     }
-'@,
-        @'
+'@
+    $widenedHelper = @'
     fn deny_syscall<T>(rules: &mut BTreeMap<i64, Vec<SeccompRule>>, nr: T)
     where
         T: Into<i64>,
@@ -759,6 +758,9 @@ function Enable-I686MuslLinuxSandboxSyscallBuild {
         rules.insert(nr.into(), vec![]); // empty rule vec = unconditional match
     }
 '@
+    $text = $text.Replace("`r`n", "`n").Replace(
+        $legacyHelper.Replace("`r`n", "`n"),
+        $widenedHelper.Replace("`r`n", "`n")
     )
 
     $acceptGuard = '            #[cfg(not(all(target_arch = "x86", target_env = "musl")))]'
