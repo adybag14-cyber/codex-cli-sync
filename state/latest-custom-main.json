@@ -2,26 +2,26 @@
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
   "upstream_sha": "8c076942cb70fba8e5c4732c23f1faabc4aed484",
-  "custom_version": "0.164.0-202610180441",
+  "custom_version": "0.164.0-202610181237",
   "version_resolution": {
-    "custom_version": "0.164.0-202610180441",
+    "custom_version": "0.164.0-202610181237",
     "base_version": "0.164.0",
     "source": "next_minor_after_latest_stable_tag",
     "latest_stable_tag": "rust-v0.163.0",
     "upstream_workspace_version": "0.0.0",
     "upstream_ref": "main",
-    "timestamp_utc": "2026-10-18T04:41:37.7457126Z"
+    "timestamp_utc": "2026-10-18T12:37:52.2794446Z"
   },
-  "build_recipe_sha256": "56df477982870710b3fa2a59155b95eac2b8829335439066ecc0e0ee31fb8787",
+  "build_recipe_sha256": "d769aaaf4c6f7666f54954a516a31b1622a9de41ae0f1201afb7180b17d555c4",
   "windows_target": "x86_64-pc-windows-msvc",
-  "generated_at_utc": "2026-10-18T04:41:30.5392425Z",
+  "generated_at_utc": "2026-10-18T12:37:44.8605644Z",
   "release_tag": "custom-windows-x64-8c076942cb70",
   "rolling_tag": "latest-windows-x64-custom",
   "patch_status": "applied",
   "custom_patches_failed": false,
   "artifact": {
     "name": "codex-windows-x64-custom-8c076942cb70.zip",
-    "sha256": "bb6ad588372ccdec89c391d5d51462c1aa0ce5bceb045000afa4befcc84c4232"
+    "sha256": "4d3bc8ccb3026e1dd46f62bb422c77edee0ea202235db3276d4548f819321bd0"
   },
   "patch_contract": {
     "local_daemon": "Disabled: embedded local TUI, no implicit attachment, lifecycle and updater rejected",
@@ -57,7 +57,7 @@
   "release_files": [
     {
       "name": "codex-windows-x64-custom-8c076942cb70.zip",
-      "sha256": "bb6ad588372ccdec89c391d5d51462c1aa0ce5bceb045000afa4befcc84c4232"
+      "sha256": "4d3bc8ccb3026e1dd46f62bb422c77edee0ea202235db3276d4548f819321bd0"
     },
     {
       "name": "codex-windows-x64-custom-8c076942cb70.manifest.json",
