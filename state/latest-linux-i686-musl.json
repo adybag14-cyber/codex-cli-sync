@@ -1,10 +1,10 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "2351d9e1b608e6f9d9a3699b71d7eb39ee41cfa4",
+  "upstream_sha": "8c076942cb70fba8e5c4732c23f1faabc4aed484",
   "linux_target": "i686-unknown-linux-musl",
-  "generated_at_utc": "2026-10-09T07:49:16.4739824Z",
-  "release_tag": "linux-i686-musl-2351d9e1b608",
+  "generated_at_utc": "2026-10-18T14:38:15.7028594Z",
+  "release_tag": "linux-i686-musl-8c076942cb70",
   "rolling_tag": "latest-linux-i686-musl",
   "custom_runtime_patches": "local_daemon_disabled; Windows permission patches not applied",
   "rusty_v8_required_by_codex_cli": false,
@@ -47,7 +47,7 @@
     },
     {
       "name": "build_bundled_liblzma_for_i686_musl",
-      "applied": true,
+      "applied": false,
       "reason": "Cross-enabled pkg-config can select the Linux runner's x86_64 liblzma archive while linking the i686 musl executable.",
       "effect": "lzma-sys compiles and links its bundled target liblzma, and the build rejects host-architecture search paths."
     }
@@ -55,6 +55,7 @@
   "build_adjustments": {
     "vendored_openssl_for_i686_musl": true,
     "blake3_pure_for_i686_musl": true,
+    "lzma_sys_required_by_codex_cli": false,
     "rusty_v8_required_by_codex_cli": false,
     "rusty_v8_built_from_source_for_i686_musl": false,
     "rusty_v8_version": null,
@@ -92,12 +93,10 @@
     "openssl_no_c11_atomics_for_i686_musl": true,
     "openssl_broken_clang_atomics_for_i686_musl": true,
     "openssl_sys_cleaned_for_i686_musl": true,
-    "lzma_sys_bundled_for_i686_musl": true,
+    "lzma_sys_bundled_for_i686_musl": false,
     "lzma_sys_host_pkg_config_disabled": true,
-    "lzma_sys_cleaned_for_i686_musl": true,
-    "lzma_sys_build_outputs": [
-      "/home/runner/work/codex-cli-sync/codex-cli-sync/out/codex-upstream-linux-i686/codex-rs/target/i686-unknown-linux-musl/release/build/lzma-sys-1e4225531b741749/output"
-    ],
+    "lzma_sys_cleaned_for_i686_musl": false,
+    "lzma_sys_build_outputs": [],
     "cargo_build_jobs": "2",
     "ca_certificates_bundle_source": "/etc/ssl/certs/ca-certificates.crt",
     "cargo_command": "cargo zigbuild --release --package codex-cli --bin codex --target i686-unknown-linux-musl"
@@ -108,13 +107,13 @@
     "rusty_v8_object_file_output": ""
   },
   "artifact": {
-    "name": "codex-linux-i686-musl-2351d9e1b608.tar.gz",
-    "sha256": "0a003fbeaef02120f728ef9e9bace2952449f99e55d84b633e74bbba2bfb14b7"
+    "name": "codex-linux-i686-musl-8c076942cb70.tar.gz",
+    "sha256": "c84c6ed88a76016145f9800e441a8753cbf0cad0cf3b9bfb10cd6091f8f3f738"
   },
   "packaged_files": [
     {
       "path": "codex",
-      "sha256": "f94badbf0801d2ae79e4f98d97373359c76ee6cde3f86d439a612a55c087a8dc"
+      "sha256": "fbbc028cb352a9e9dc895dca3ff6fd085f0561d23d2b528ecf260f603ff6e351"
     },
     {
       "path": "certs/ca-certificates.crt",
@@ -131,11 +130,11 @@
   ],
   "release_files": [
     {
-      "name": "codex-linux-i686-musl-2351d9e1b608.tar.gz",
-      "sha256": "0a003fbeaef02120f728ef9e9bace2952449f99e55d84b633e74bbba2bfb14b7"
+      "name": "codex-linux-i686-musl-8c076942cb70.tar.gz",
+      "sha256": "c84c6ed88a76016145f9800e441a8753cbf0cad0cf3b9bfb10cd6091f8f3f738"
     },
     {
-      "name": "codex-linux-i686-musl-2351d9e1b608.manifest.json",
+      "name": "codex-linux-i686-musl-8c076942cb70.manifest.json",
       "sha256": null
     }
   ]
