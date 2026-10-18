@@ -52,6 +52,7 @@ jobs:
       - name: Verify Complete Windows Patch And Version Discovery
         shell: pwsh
         run: |
+          ./scripts/test-upstream-compatibility.ps1 -SourceRoot out/contract-upstream
           . ./scripts/Resolve-CodexCustomVersion.ps1
           $resolved = Resolve-CodexCustomVersion -CargoTomlPath out/contract-upstream/codex-rs/Cargo.toml -UpstreamRef '${{ matrix.ref }}' -RemoteUrl https://github.com/openai/codex.git
           $resolved | ConvertTo-Json | Set-Content out/version-resolution.json

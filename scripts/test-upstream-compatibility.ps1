@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param()
+param([string]$SourceRoot)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -605,6 +605,7 @@ $($case.Signature)
         rules.insert(nr, vec![]); // empty rule vec = unconditional match
     }
 '@
+    foreach ($sandboxPath in @('linux-sandbox/src/landlock.rs', 'linux-sandbox/src/seccomp.rs')) {
     foreach ($rule in @(
         @{ Syscall = 'socket'; Payload = 'deny_vsock.clone()' },
         @{ Syscall = 'socketpair'; Payload = 'deny_vsock' },
@@ -623,15 +624,41 @@ $($case.Signature)
                 "            rules.insert($key, vec![$($rule.Payload)]);"
             }
             $root = New-Layout -Name ("sandbox-syscall-" + $testCount) -Files @{
-                'linux-sandbox/src/landlock.rs' = ($syscallHelper + "`n" + $call)
+                $sandboxPath = ($syscallHelper + "`n" + '            deny_syscall(&mut rules, libc::SYS_accept);' + "`n" + $call)
             }
             Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root | Out-Null
-            $patched = [IO.File]::ReadAllText((Join-Path $root 'linux-sandbox/src/landlock.rs'))
+            $patched = [IO.File]::ReadAllText((Join-Path $root $sandboxPath))
             if (-not $patched.Contains($call.Replace($key, "$key.into()"))) {
                 throw "Syscall key was not widened while preserving the complete $($rule.Payload) rule"
             }
+            if (-not $patched.Contains('#[cfg(not(all(target_arch = "x86", target_env = "musl")))]')) {
+                throw 'The i686-musl SYS_accept exclusion was not applied'
+            }
+            if (Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root) {
+                throw 'Already normalized syscall source changed on reapplication'
+            }
+            if ([IO.File]::ReadAllText((Join-Path $root $sandboxPath)) -cne $patched) {
+                throw 'Syscall source bytes changed on reapplication'
+            }
             $testCount++
         }
+    }
+    }
+    foreach ($files in @(
+        @{},
+        @{ 'linux-sandbox/src/landlock.rs' = $syscallHelper; 'linux-sandbox/src/seccomp.rs' = $syscallHelper }
+    )) {
+        $root = New-Layout -Name ("sandbox-source-refusal-" + $testCount) -Files $files
+        $rejected = $false
+        try { Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root | Out-Null }
+        catch { $rejected = $_.Exception.Message.StartsWith('Linux sandbox syscall source:') }
+        if (-not $rejected) { throw 'Missing or ambiguous syscall source was accepted' }
+        foreach ($file in $files.GetEnumerator()) {
+            if ([IO.File]::ReadAllText((Join-Path $root $file.Key)) -cne $file.Value) {
+                throw 'Syscall source refusal modified files'
+            }
+        }
+        $testCount++
     }
     $convertedCalls = @'
             rules.insert(libc::SYS_socket.into(), vec![deny_vsock.clone()]);
@@ -660,6 +687,32 @@ $($case.Signature)
         if (-not $rejected -or [IO.File]::ReadAllText((Join-Path $root 'linux-sandbox/src/landlock.rs')) -ne $original) {
             throw 'Unsupported syscall source was not rejected before writing changes'
         }
+        $testCount++
+    }
+
+    if ($SourceRoot) {
+        $files = @{}
+        foreach ($relative in @('linux-sandbox/src/landlock.rs', 'linux-sandbox/src/seccomp.rs')) {
+            $path = Join-Path $SourceRoot "codex-rs/$relative"
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                $files[$relative] = [IO.File]::ReadAllText($path)
+            }
+        }
+        $root = New-Layout -Name 'actual-upstream-sandbox' -Files $files
+        Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root | Out-Null
+        $first = @{}
+        foreach ($relative in $files.Keys) {
+            $first[$relative] = [IO.File]::ReadAllText((Join-Path $root $relative))
+        }
+        if (Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root) {
+            throw 'Actual upstream syscall patch is not idempotent'
+        }
+        foreach ($relative in $files.Keys) {
+            if ([IO.File]::ReadAllText((Join-Path $root $relative)) -cne $first[$relative]) {
+                throw 'Actual upstream syscall patch changed bytes on reapplication'
+            }
+        }
+        Write-Host 'Verified Linux syscall compatibility against the selected upstream source.'
         $testCount++
     }
 

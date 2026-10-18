@@ -732,15 +732,20 @@ function Remove-StaleRustyV8GnOutput {
 function Enable-I686MuslLinuxSandboxSyscallBuild {
     param([Parameter(Mandatory = $true)][string]$CodexRsDir)
 
-    $landlockPath = Join-Path $CodexRsDir "linux-sandbox/src/landlock.rs"
-    if (-not (Test-Path -LiteralPath $landlockPath -PathType Leaf)) {
-        throw "Required linux sandbox file not found: $landlockPath"
+    # Upstream moved the seccomp primitives out of landlock.rs. Require one
+    # reviewed layout so an unknown source tree cannot silently skip widening.
+    $candidates = @('linux-sandbox/src/landlock.rs', 'linux-sandbox/src/seccomp.rs') |
+        ForEach-Object { Join-Path $CodexRsDir $_ } |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+    if (@($candidates).Count -ne 1) {
+        throw 'Linux sandbox syscall source: require exactly one reviewed landlock.rs or seccomp.rs file.'
     }
+    $syscallPath = @($candidates)[0]
 
-    $text = [System.IO.File]::ReadAllText($landlockPath)
+    $text = [System.IO.File]::ReadAllText($syscallPath)
     $originalText = $text
 
-    $text = $text.Replace(
+    $text = $text.Replace("`r`n", "`n").Replace(
         @'
     fn deny_syscall(rules: &mut BTreeMap<i64, Vec<SeccompRule>>, nr: i64) {
         rules.insert(nr, vec![]); // empty rule vec = unconditional match
@@ -756,13 +761,20 @@ function Enable-I686MuslLinuxSandboxSyscallBuild {
 '@
     )
 
-    $text = $text.Replace(
-        "            deny_syscall(&mut rules, libc::SYS_accept);",
-        @'
-            #[cfg(not(all(target_arch = "x86", target_env = "musl")))]
-            deny_syscall(&mut rules, libc::SYS_accept);
-'@
-    )
+    $acceptGuard = '            #[cfg(not(all(target_arch = "x86", target_env = "musl")))]'
+    $acceptCall = '            deny_syscall(&mut rules, libc::SYS_accept);'
+    $guardedAccept = $acceptGuard + "`n" + $acceptCall
+    if (-not $text.Contains($guardedAccept)) {
+        $text = $text.Replace($acceptCall, $guardedAccept)
+    }
+    if ([regex]::Matches($text, 'libc::SYS_accept\b').Count -ne
+        [regex]::Matches($text, [regex]::Escape($guardedAccept)).Count) {
+        throw "Linux sandbox syscall SYS_accept guard has an unsupported layout in $syscallPath"
+    }
+    if ($text -notmatch 'fn deny_syscall<T>\(rules: &mut BTreeMap<i64, Vec<SeccompRule>>, nr: T\)' -or
+        $text -notmatch 'T: Into<i64>' -or -not $text.Contains('rules.insert(nr.into(), vec![]);')) {
+        throw "Linux sandbox syscall helper has an unsupported layout in $syscallPath"
+    }
 
     # Normalize the map key independently of the rule value. Upstream adds and
     # renames network modes (including AF_VSOCK restrictions), but every socket
@@ -770,19 +782,20 @@ function Enable-I686MuslLinuxSandboxSyscallBuild {
     $socketKey = '\brules\s*\.\s*insert\s*\(\s*libc::SYS_(?:socket|socketpair)\b'
     $socketKeyCount = [regex]::Matches($text, $socketKey).Count
     if ($socketKeyCount -eq 0) {
-        throw "Linux sandbox socket syscall anchors not found in $landlockPath"
+        throw "Linux sandbox socket syscall anchors not found in $syscallPath"
     }
     $text = [regex]::Replace($text, "($socketKey)(\s*,)", '${1}.into()${2}')
     if ([regex]::Matches($text, "$socketKey\s*\.into\(\)\s*,").Count -ne $socketKeyCount) {
-        throw "Linux sandbox socket syscall keys were not all normalized in $landlockPath"
+        throw "Linux sandbox socket syscall keys were not all normalized in $syscallPath"
     }
 
-    if ($text -eq $originalText) {
-        throw "Linux sandbox syscall compatibility patch did not change $landlockPath"
+    if ($originalText.Contains("`r`n")) { $text = $text.Replace("`n", "`r`n") }
+    if ($text -ceq $originalText) {
+        return $false
     }
 
     [System.IO.File]::WriteAllText(
-        $landlockPath,
+        $syscallPath,
         $text,
         [System.Text.UTF8Encoding]::new($false)
     )
