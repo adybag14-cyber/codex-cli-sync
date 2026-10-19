@@ -1,27 +1,27 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "89461ea6833832b0551ce24ee32205824d5c108d",
-  "custom_version": "0.164.0-202610190443",
+  "upstream_sha": "e4568a3538c9cab6627d64ff8cdfc7d98b79b7db",
+  "custom_version": "0.164.0-202610191537",
   "version_resolution": {
-    "custom_version": "0.164.0-202610190443",
+    "custom_version": "0.164.0-202610191537",
     "base_version": "0.164.0",
     "source": "next_minor_after_latest_stable_tag",
     "latest_stable_tag": "rust-v0.163.0",
     "upstream_workspace_version": "0.0.0",
     "upstream_ref": "main",
-    "timestamp_utc": "2026-10-19T04:43:01.1648543Z"
+    "timestamp_utc": "2026-10-19T15:37:49.9671577Z"
   },
   "build_recipe_sha256": "d769aaaf4c6f7666f54954a516a31b1622a9de41ae0f1201afb7180b17d555c4",
   "windows_target": "x86_64-pc-windows-msvc",
-  "generated_at_utc": "2026-10-19T04:42:54.9062450Z",
-  "release_tag": "custom-windows-x64-89461ea68338",
+  "generated_at_utc": "2026-10-19T15:37:46.6687585Z",
+  "release_tag": "custom-windows-x64-e4568a3538c9",
   "rolling_tag": "latest-windows-x64-custom",
   "patch_status": "applied",
   "custom_patches_failed": false,
   "artifact": {
-    "name": "codex-windows-x64-custom-89461ea68338.zip",
-    "sha256": "bfb1125c3232f238ec8c0ccfb598f6fb128e1a9decc585c47b51937c6078554f"
+    "name": "codex-windows-x64-custom-e4568a3538c9.zip",
+    "sha256": "6218d19a7ddb4281bd9a995f1711285ecd73e02f997c2b5b673e90093892ff63"
   },
   "patch_contract": {
     "local_daemon": "Disabled: embedded local TUI, no implicit attachment, lifecycle and updater rejected",
@@ -56,11 +56,11 @@
   },
   "release_files": [
     {
-      "name": "codex-windows-x64-custom-89461ea68338.zip",
-      "sha256": "bfb1125c3232f238ec8c0ccfb598f6fb128e1a9decc585c47b51937c6078554f"
+      "name": "codex-windows-x64-custom-e4568a3538c9.zip",
+      "sha256": "6218d19a7ddb4281bd9a995f1711285ecd73e02f997c2b5b673e90093892ff63"
     },
     {
-      "name": "codex-windows-x64-custom-89461ea68338.manifest.json",
+      "name": "codex-windows-x64-custom-e4568a3538c9.manifest.json",
       "sha256": null
     },
     {
