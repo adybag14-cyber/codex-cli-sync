@@ -22,7 +22,8 @@ PUBLIC_EXPORTS = {
     "pubmodtelemetry;",
     "pubusebackend::BackendKind;",
 }
-OPTIONAL_PUBLIC_EXPORTS = {"pubusebackend::windows::is_elevated;"}
+STDERR_EXPORT = "pubusebackend::stderr_log::stderr_writer;"
+OPTIONAL_PUBLIC_EXPORTS = {"pubusebackend::windows::is_elevated;", STDERR_EXPORT}
 
 
 def replace_once(text, before, after, description):
@@ -34,7 +35,7 @@ def replace_once(text, before, after, description):
 
 
 def check_entry_guard(text, name):
-    pattern = rf"pub async fn {name}\([^{{]*?\) -> [^{{]+\{{\s*(?:crate::)?ensure_supported_platform\(\)\?;"
+    pattern = rf"pub (?:async )?fn {name}\([^{{]*?\) -> [^{{]+\{{\s*(?:crate::)?ensure_supported_platform\(\)\?;"
     if len(re.findall(pattern, text)) != 1:
         raise ValueError(f"Daemon entry point lost its first-operation guard: {name}")
 
@@ -54,6 +55,20 @@ def patched_sources(sources):
         "codex-rs/app-server-daemon/src/launch.rs": {"start_with_features", "restart_with_features"},
         "codex-rs/app-server-daemon/src/prepare_install.rs": {"update_from_cli"},
     }
+    if STDERR_EXPORT in normalized:
+        public_entries[daemon].add("maintain_stderr_log")
+        # The writer itself falls back to ordinary stderr. Only the managed-log
+        # initializer creates state or starts a worker, so reject it first.
+        before = ('pub fn maintain_stderr_log() -> Result<()> {\n'
+                  '    backend::stderr_log::start(\n'
+                  '        Daemon::from_environment()?\n'
+                  '            .pid_file\n'
+                  '            .with_extension("stderr.log"),\n'
+                  '    );\n    Ok(())\n}')
+        after = before.replace('    backend::stderr_log::start(',
+                               '    ensure_supported_platform()?;\n    backend::stderr_log::start(', 1)
+        result[daemon] = replace_once(result[daemon], before, after, "managed stderr initializer")
+        check_entry_guard(result[daemon], "maintain_stderr_log")
     for path, expected in public_entries.items():
         entries = re.findall(r"^[ \t]*pub (?:async )?fn ([a-z_]+)\(", sources[path], re.M)
         found = set(entries)
@@ -101,9 +116,17 @@ def patched_sources(sources):
     after = (before + '    if !codex_app_server_daemon::LOCAL_DAEMON_ENABLED {\n'
              '        return None;\n    }\n')
     result[tui] = replace_once(result[tui], before, after, "implicit daemon socket discovery")
-    result[tui] = replace_once(result[tui], "        let expected = Some(socket_path);",
-                               "        let expected: Option<AbsolutePathBuf> = None;",
-                               "existing socket discovery regression expectation")
+    # Upstream moved the inline TUI tests into lib_tests.rs. Require exactly one
+    # reviewed expectation across both layouts, including already-patched text.
+    expectation = re.compile(
+        r"^([ \t]*)let expected(?: = Some\(socket_path\)|: Option<AbsolutePathBuf> = None);$", re.M)
+    candidates = [(path, match) for path in (tui, *OPTIONAL_FILES)
+                  for match in expectation.finditer(result.get(path, ""))]
+    if len(candidates) != 1:
+        raise ValueError("Unsupported upstream source: existing socket discovery regression expectation")
+    path, match = candidates[0]
+    result[path] = (result[path][:match.start()] + match[1]
+                    + "let expected: Option<AbsolutePathBuf> = None;" + result[path][match.end():])
     return result
 
 
@@ -115,10 +138,12 @@ FILES = (
     "codex-rs/tui/src/startup_orchestration.rs",
     "codex-rs/tui/src/lib.rs",
 )
+OPTIONAL_FILES = ("codex-rs/tui/src/lib_tests.rs",)
 
 
 def patch(root):
-    raw = {name: (root / name).read_bytes() for name in FILES}
+    names = (*FILES, *(name for name in OPTIONAL_FILES if (root / name).is_file()))
+    raw = {name: (root / name).read_bytes() for name in names}
     original = {name: data.decode("utf-8").replace("\r\n", "\n") for name, data in raw.items()}
     changed = patched_sources(original)
     for name, text in changed.items():

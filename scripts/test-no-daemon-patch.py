@@ -29,6 +29,25 @@ def fixture():
     )))
 
 
+def current_fixture():
+    values = fixture()
+    values[patcher.FILES[0]] += '''
+pub use backend::stderr_log::stderr_writer;
+pub fn maintain_stderr_log() -> Result<()> {
+    backend::stderr_log::start(
+        Daemon::from_environment()?
+            .pid_file
+            .with_extension("stderr.log"),
+    );
+    Ok(())
+}
+'''
+    values[patcher.FILES[-1]] = values[patcher.FILES[-1]].replace(
+        "        let expected = Some(socket_path);\n", "")
+    values[patcher.OPTIONAL_FILES[0]] = "    let expected = Some(socket_path);\n"
+    return values
+
+
 class Contracts(unittest.TestCase):
     def test_repeat_application_preserves_bytes_and_line_endings(self):
         for newline in ("\n", "\r\n"):
@@ -57,6 +76,55 @@ class Contracts(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     patcher.patch(root)
                 self.assertEqual(before, {name: (root / name).read_bytes() for name in patcher.FILES})
+
+    def test_managed_logging_is_guarded_and_moved_tests_are_updated(self):
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=newline), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                values = current_fixture()
+                for name, text in values.items():
+                    (root / name).parent.mkdir(parents=True, exist_ok=True)
+                    (root / name).write_bytes(text.replace("\n", newline).encode())
+                patcher.patch(root)
+                first = {name: (root / name).read_bytes() for name in values}
+                daemon = first[patcher.FILES[0]].decode().replace("\r\n", "\n")
+                self.assertIn("pub fn maintain_stderr_log() -> Result<()> {\n    ensure_supported_platform()?;", daemon)
+                self.assertIn("pub use backend::stderr_log::stderr_writer;", daemon)
+                self.assertEqual(first[patcher.OPTIONAL_FILES[0]].decode(),
+                                 "    let expected: Option<AbsolutePathBuf> = None;" + newline)
+                patcher.patch(root)
+                self.assertEqual(first, {name: (root / name).read_bytes() for name in values})
+                if newline == "\r\n":
+                    self.assertTrue(all(b"\n" not in value.replace(b"\r\n", b"") for value in first.values()))
+
+    def test_current_layout_drift_never_partially_writes(self):
+        for drift in ("logging-side-effect", "missing-export", "missing-initializer", "missing-expectation",
+                      "duplicate-expectation", "ambiguous-test-layout"):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                values = current_fixture()
+                daemon = patcher.FILES[0]
+                tests = patcher.OPTIONAL_FILES[0]
+                if drift == "logging-side-effect":
+                    values[daemon] = values[daemon].replace("    backend::stderr_log::start(",
+                                                          "    create_state();\n    backend::stderr_log::start(")
+                elif drift == "missing-export":
+                    values[daemon] = values[daemon].replace("pub use backend::stderr_log::stderr_writer;", "")
+                elif drift == "missing-initializer":
+                    values[daemon] = values[daemon].replace("pub fn maintain_stderr_log()", "fn maintain_stderr_log()")
+                elif drift == "missing-expectation":
+                    values[tests] = "upstream changed\n"
+                elif drift == "duplicate-expectation":
+                    values[tests] *= 2
+                else:
+                    values[patcher.FILES[-1]] += "        let expected = Some(socket_path);\n"
+                for name, text in values.items():
+                    (root / name).parent.mkdir(parents=True, exist_ok=True)
+                    (root / name).write_bytes(text.encode())
+                before = {name: (root / name).read_bytes() for name in values}
+                with self.assertRaises(ValueError):
+                    patcher.patch(root)
+                self.assertEqual(before, {name: (root / name).read_bytes() for name in values})
 
     def test_lifecycle_side_effect_before_guard_is_rejected(self):
         values = fixture()

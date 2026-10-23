@@ -159,6 +159,14 @@ remain parseable and return an explicit disabled diagnostic. The internal
 `--managed-daemon` worker is rejected too. Explicit `--remote` connections and
 foreground `codex app-server` remain available.
 
+The October 23 upstream logging API is supported without enabling managed log
+workers: `maintain_stderr_log` rejects through the same first-operation lifecycle
+guard, while the shared stderr writer remains available for foreground logging.
+The socket-discovery test expectation supports both inline TUI tests and the
+reviewed `lib_tests.rs` layout. Missing or ambiguous expectations, new public APIs,
+and changed logging initializers fail before any source file is written. Both
+reviewed upstream snapshots remain pinned in the compatibility matrix.
+
 The Windows release builds on **`windows-2025`**, and Linux i686 builds on
 **`ubuntu-24.04`**. Windows is built natively with MSVC, not through WSL.
 The release checks all existing Windows permission, OAuth, metadata, debug,

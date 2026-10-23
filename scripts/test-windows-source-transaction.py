@@ -22,6 +22,7 @@ def main():
         if value.returncode == 0:
             raw[path] = value.stdout
         elif path not in {'codex-rs/mcp-server/Cargo.toml', 'codex-rs/mcp-server/src/lib.rs', 'codex-rs/cli/Cargo.toml',
+                         'codex-rs/tui/src/lib_tests.rs',
                          'codex-rs/guardian-context/src/retained_instructions.rs', 'codex-rs/guardian-context/src/composition.rs',
                          'codex-rs/guardian-context/tests/cache_prefix.rs', 'codex-rs/guardian-context/src/profile.rs'}:
             raise AssertionError(f'Missing required upstream source: {path}')

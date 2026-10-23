@@ -829,6 +829,9 @@ $patchInputs = @(
     'codex-rs/Cargo.toml', 'codex-rs/Cargo.lock'
 )
 # Establish optional crate completeness against the real tree before staging.
+if (Test-Path -LiteralPath (Join-Path $SourceRoot 'codex-rs/tui/src/lib_tests.rs')) {
+    $patchInputs += 'codex-rs/tui/src/lib_tests.rs'
+}
 $mcpRoot = Resolve-UpstreamMcpServerCrateRoot -CodexRsDir (Join-Path $SourceRoot 'codex-rs')
 if ($mcpRoot) { $patchInputs += @('codex-rs/mcp-server/Cargo.toml', 'codex-rs/mcp-server/src/lib.rs') }
 if (Test-Path -LiteralPath (Join-Path $SourceRoot 'codex-rs/cli/Cargo.toml')) { $patchInputs += 'codex-rs/cli/Cargo.toml' }
