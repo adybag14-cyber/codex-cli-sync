@@ -37,6 +37,8 @@ jobs:
           - b741e480e203f037ca726bc2a76d99a8e8668e66
           - 5b0b2530354052b9194156d70d4c94a439368342
           - a5130128697b10022a88e8f5eae6dca77393b4b0
+          - d4bdafd378a8e328a67a4cd3557b5fe634af378c
+          - 398500106707f0a3217c7cf83edc2bf226cc342f
           - main
     steps:
       - uses: actions/checkout@v6
