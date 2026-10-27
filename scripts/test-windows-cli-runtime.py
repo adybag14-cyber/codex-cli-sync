@@ -198,6 +198,18 @@ def main():
         if not (package / relative).is_file():
             raise AssertionError(f"Missing required package file: {relative}")
     checks = ["canonical_package_layout"]
+    if "execServer" in metadata:
+        if metadata["execServer"] != "bin/codex-exec-server.exe":
+            raise AssertionError("Unexpected exec-server package path")
+        helper = package / metadata["execServer"]
+        if not helper.is_file():
+            raise AssertionError("Missing required packaged exec-server")
+        result = subprocess.run([str(helper), "--help"], capture_output=True, text=True,
+                                encoding="utf-8", timeout=30,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if result.returncode:
+            raise AssertionError(f"Packaged exec-server help failed: {result.stderr[-2000:]}")
+        checks.append("exec_server_package_and_help")
     commands = debug_commands(args.source_root.resolve())
     # Codex deliberately refuses helper aliases under the OS shared temp directory.
     # Use a short disposable user-profile path: Windows AF_UNIX sockets are also

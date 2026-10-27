@@ -85,6 +85,14 @@ and the release manifest records the ripgrep version and archive/executable hash
 This prevents an API rate limit discovered after a long successful Rust build
 from being mistaken for a Windows source-patch failure.
 
+For upstream packages declaring `--exec-server-bin`, Windows builds also compile
+`codex-exec-server.exe`, supply it explicitly to the canonical builder, verify
+its packaged hash and `execServer` manifest path, and run its standalone help
+probe. Older package layouts remain supported. Both normal packaging and the
+companion's legacy-package repair prohibit implicit Cargo compilation during
+assembly, so a newly required input fails immediately instead of starting an
+unplanned build. The companion also validates declared exec-server files.
+
 ## Automatic Windows custom version
 
 [`scripts/Resolve-CodexCustomVersion.ps1`](scripts/Resolve-CodexCustomVersion.ps1)
@@ -129,6 +137,11 @@ the renamed transcript API. A shared, guarded compatibility bridge fixes those
 specific expressions for Windows and Linux. It accepts the reviewed old/fixed
 forms, preserves source line endings, and rejects ambiguous changes before
 writing. On Windows it participates in the complete source-patch transaction.
+The October 27 layout moves `ContextProfile` from `src/profile.rs` to
+`src/preparation/transcript.rs`. The bridge and transaction recognize exactly one
+of those reviewed providers, reject missing or ambiguous providers before writes,
+and preserve already-fixed source bytes. Contracts include the failing
+`d93071fae87f` revision, the reviewed `cf2c04b325e1` revision, and live `main`.
 Native Windows CI now compiles and runs the entire `codex-guardian-context` crate
 against the failing pinned revision and live main. The release also runs those
 tests before the larger request/dynamic-tool suites and bundles their result.
