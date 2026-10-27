@@ -82,6 +82,10 @@ CHANGED_BEHAVIOR
     try { New-WindowsCodexPackage -SourceRoot $fakeSource -Destination (Join-Path $root 'unexpected-build') @arguments | Out-Null }
     catch { $rejected = $_.Exception.Message.Contains('canonical package builder failed') }
     if (-not $rejected) { throw 'Unexpected source compilation during assembly was not blocked.' }
+    # Verify recovery after the negative cases, and finish with a successful
+    # native command so its expected predecessor does not leak into Actions.
+    [IO.File]::WriteAllText((Join-Path $fakeSource 'scripts/build_codex_package.py'), $builder.Replace('CHANGED_BEHAVIOR', ''))
+    New-WindowsCodexPackage -SourceRoot $fakeSource -Destination (Join-Path $root 'complete-exec-package') @arguments | Out-Null
     Write-Host 'Passed package builder contracts: real upstream, required prebuilt inputs, and binary identity checks.'
 } finally {
     $resolvedRoot = [IO.Path]::GetFullPath($root)
