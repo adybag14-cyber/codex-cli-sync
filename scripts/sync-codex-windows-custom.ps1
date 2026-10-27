@@ -16,6 +16,7 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot 'Read-ArtifactChecksums.ps1')
 . (Join-Path $PSScriptRoot 'Test-WindowsBuildState.ps1')
 . (Join-Path $PSScriptRoot 'Install-WindowsRipgrep.ps1')
+. (Join-Path $PSScriptRoot 'New-WindowsCodexPackage.ps1')
 
 $StateDir = [System.IO.Path]::GetFullPath($StateDir)
 $WorkspaceDir = [System.IO.Path]::GetFullPath($WorkspaceDir)
@@ -424,7 +425,11 @@ try {
     try {
         $env:RUSTY_V8_ARCHIVE = $rustyV8Artifacts.ArchivePath
         $env:RUSTY_V8_SRC_BINDING_PATH = $rustyV8Artifacts.BindingPath
-        cargo build --release --target $WindowsTarget --bin codex --bin codex-command-runner --bin codex-windows-sandbox-setup --bin codex-code-mode-host
+        $extraBinaries = @()
+        if (Test-UpstreamExecServerPackage -SourceRoot $sourceDir) {
+            $extraBinaries += @('--bin', 'codex-exec-server')
+        }
+        cargo build --release --target $WindowsTarget --bin codex --bin codex-command-runner --bin codex-windows-sandbox-setup --bin codex-code-mode-host @extraBinaries
         if ($LASTEXITCODE -ne 0) {
             throw "cargo build failed with exit code $LASTEXITCODE"
         }
@@ -500,6 +505,11 @@ if (-not $codeModeHostHelpText.Contains("--listen")) {
     throw "Packaged codex-code-mode-host.exe help did not include the expected --listen option."
 }
 Write-Host "Packaged codex-code-mode-host.exe smoke test passed."
+if (Test-UpstreamExecServerPackage -SourceRoot $sourceDir) {
+    & (Join-Path $binDir 'codex-exec-server.exe') --help | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw 'Packaged codex-exec-server.exe --help failed.' }
+    Write-Host 'Packaged codex-exec-server.exe smoke test passed.'
+}
 
 & dotnet publish (Join-Path (Split-Path -Parent $scriptRoot) 'tools/CodexSyncDoctor/CodexSyncDoctor.csproj') `
     --configuration Release --runtime win-x64 --self-contained true `

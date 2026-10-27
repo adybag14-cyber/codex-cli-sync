@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -14,6 +15,11 @@ def main():
     args = parser.parse_args()
     executable = args.doctor.resolve()
     upstream = args.source_root.resolve()
+    parser_source = upstream / "scripts/codex_package/cli.py"
+    if not parser_source.is_file():
+        parser_source = upstream / "scripts/build_codex_package.py"
+    requires_exec_server = bool(re.search(r'''\bparser\.add_argument\(\s*["']--exec-server-bin["']\s*,''',
+                                          parser_source.read_text(encoding="utf-8")))
     passed = 0
 
     def run(*arguments, succeeds=True):
@@ -43,6 +49,8 @@ def main():
         resources.mkdir(parents=True)
         names = ["codex.exe", "codex-resources/codex-code-mode-host.exe", "codex-resources/rg.exe",
                  "codex-resources/codex-command-runner.exe", "codex-resources/codex-windows-sandbox-setup.exe"]
+        if requires_exec_server:
+            names.append("codex-resources/codex-exec-server.exe")
         for name in names:
             (legacy / name).write_bytes(("DISPOSABLE NONEXECUTABLE FIXTURE: " + name).encode())
         (legacy / "VERSION.txt").write_text("1.2.3\n", encoding="utf-8")
@@ -50,11 +58,27 @@ def main():
         repaired = json.loads(run("repair-package", legacy, destination, upstream))
         assert repaired["binariesPreserved"] and not repaired["activeInstallationChanged"]
         inspected = json.loads(run("inspect-package", destination))
-        assert inspected["version"] == "1.2.3" and len(inspected["files"]) == 5
+        assert inspected["version"] == "1.2.3" and len(inspected["files"]) == len(names)
         assert {name: (legacy / name).read_bytes() for name in names} == originals
         run("repair-package", legacy, destination, upstream, succeeds=False)
         run("repair-package", legacy, legacy / "nested", upstream, succeeds=False)
         run("inspect-package", legacy, succeeds=False)
+        if requires_exec_server:
+            helper = destination / "bin/codex-exec-server.exe"
+            saved = helper.read_bytes()
+            helper.unlink()
+            run("inspect-package", destination, succeeds=False)
+            helper.write_bytes(saved)
+            metadata_path = destination / "codex-package.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["execServer"] = "../../unexpected.exe"
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            run("inspect-package", destination, succeeds=False)
+            metadata["execServer"] = "bin/codex-exec-server.exe"
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            (legacy / "codex-resources/codex-exec-server.exe").unlink()
+            run("repair-package", legacy, root / "missing-executor", upstream, succeeds=False)
+            assert not (root / "missing-executor").exists()
         (destination / "bin/codex-code-mode-host.exe").unlink()
         run("inspect-package", destination, succeeds=False)
         metadata_path = destination / "codex-package.json"

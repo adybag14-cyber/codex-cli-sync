@@ -33,6 +33,38 @@ fn retain_new_instructions() {
 
 
 class GuardianContracts(unittest.TestCase):
+    def test_reviewed_profile_layouts_patch_and_reapply_identically(self):
+        for profile_path in bridge.PROFILE_PATHS:
+            for newline in ("\n", "\r\n"):
+                with self.subTest(profile=profile_path, newline=newline), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    files = {bridge.SOURCE: SOURCE, bridge.COMPOSITION: COMPOSITION,
+                             profile_path: PROFILE, bridge.CACHE_TEST: TEST}
+                    for name, value in files.items():
+                        path = root / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(value.replace("\n", newline).encode())
+                    self.assertTrue(bridge.patch(root))
+                    first = {name: (root / name).read_bytes() for name in files}
+                    self.assertFalse(bridge.patch(root))
+                    self.assertEqual(first, {name: (root / name).read_bytes() for name in files})
+                    self.assertIn(b'profile.prepare_transcript(', first[bridge.CACHE_TEST])
+                    self.assertEqual(first[profile_path], PROFILE.encode())
+
+    def test_missing_or_ambiguous_profile_rejects_before_source_writes(self):
+        for profiles in ((), bridge.PROFILE_PATHS):
+            with self.subTest(profiles=profiles), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                files = {bridge.SOURCE: SOURCE, bridge.COMPOSITION: COMPOSITION, bridge.CACHE_TEST: TEST}
+                files.update({name: PROFILE for name in profiles})
+                for name, value in files.items():
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(value.encode())
+                with self.assertRaisesRegex(ValueError, "profile source is (missing|ambiguous)"):
+                    bridge.patch(root)
+                self.assertEqual(files, {name: (root / name).read_bytes().decode() for name in files})
+
     def test_old_expressions_are_wrapped_and_reapplication_is_identical(self):
         fixed = bridge.patched_source(SOURCE, COMPOSITION)
         self.assertEqual(fixed.count("SectionContent::Other("), 4)

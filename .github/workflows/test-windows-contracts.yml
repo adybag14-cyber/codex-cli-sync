@@ -39,6 +39,8 @@ jobs:
           - a5130128697b10022a88e8f5eae6dca77393b4b0
           - d4bdafd378a8e328a67a4cd3557b5fe634af378c
           - 398500106707f0a3217c7cf83edc2bf226cc342f
+          - d93071fae87f73ba1d251ebb3808773f18f0b77a
+          - cf2c04b325e1929732727e7776243226fbbe19bc
           - main
     steps:
       - uses: actions/checkout@v6
@@ -125,6 +127,18 @@ jobs:
       - name: Exercise Real Windows CLI Runtime Fixture
         shell: pwsh
         run: ./scripts/test-windows-cli-runtime-fixture.ps1 -SourceRoot out/contract-upstream
+      - name: Check Out Current Package Contract Source
+        uses: actions/checkout@v6
+        with:
+          repository: openai/codex
+          ref: cf2c04b325e1929732727e7776243226fbbe19bc
+          path: out/current-package-upstream
+          persist-credentials: false
+      - name: Verify Current Companion Package Contract
+        shell: pwsh
+        run: |
+          python scripts/test-sync-doctor.py --doctor out/doctor/codex-sync-doctor.exe --source-root out/current-package-upstream
+          if ($LASTEXITCODE -ne 0) { throw 'Current companion package integration tests failed.' }
       - name: Upload Runtime Fixture Evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -142,6 +156,7 @@ jobs:
       matrix:
         ref:
           - 5b0b2530354052b9194156d70d4c94a439368342
+          - cf2c04b325e1929732727e7776243226fbbe19bc
           - main
     env:
       CARGO_BUILD_JOBS: '4'

@@ -838,7 +838,14 @@ if (Test-Path -LiteralPath (Join-Path $SourceRoot 'codex-rs/cli/Cargo.toml')) { 
 if (Test-Path -LiteralPath (Join-Path $SourceRoot 'codex-rs/guardian-context/src/retained_instructions.rs')) {
     $patchInputs += @('codex-rs/guardian-context/src/retained_instructions.rs', 'codex-rs/guardian-context/src/composition.rs')
     if (Test-Path -LiteralPath (Join-Path $SourceRoot 'codex-rs/guardian-context/tests/cache_prefix.rs')) {
-        $patchInputs += @('codex-rs/guardian-context/tests/cache_prefix.rs', 'codex-rs/guardian-context/src/profile.rs')
+        $guardianProfiles = @(
+            @('codex-rs/guardian-context/src/profile.rs', 'codex-rs/guardian-context/src/preparation/transcript.rs') |
+                Where-Object { Test-Path -LiteralPath (Join-Path $SourceRoot $_) -PathType Leaf }
+        )
+        if ($guardianProfiles.Count -eq 0) { throw 'Guardian profile source is missing from the reviewed layouts' }
+        if ($guardianProfiles.Count -ne 1) { throw 'Guardian profile source is ambiguous across reviewed layouts' }
+        $patchInputs += 'codex-rs/guardian-context/tests/cache_prefix.rs'
+        $patchInputs += $guardianProfiles
     }
 }
 Invoke-SourcePatchTransaction -SourceRoot $SourceRoot -RelativePaths $patchInputs -Patch {

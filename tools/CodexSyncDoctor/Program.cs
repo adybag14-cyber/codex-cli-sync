@@ -62,6 +62,18 @@ internal static class Program
     private static void Print(object value) => Console.WriteLine(JsonSerializer.Serialize(value, JsonOptions));
     private static string Hash(string file) => Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(file)));
 
+    private static bool RequiresExecServer(string sourceRoot)
+    {
+        var parser = Path.Combine(sourceRoot, "scripts/codex_package/cli.py");
+        if (!File.Exists(parser)) parser = Path.Combine(sourceRoot, "scripts/build_codex_package.py");
+        var source = File.ReadAllText(parser);
+        var count = Regex.Matches(source, @"\bparser\.add_argument\(\s*[""']--exec-server-bin[""']\s*,",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2)).Count;
+        if (count > 1 || (count == 0 && source.Contains("--exec-server-bin", StringComparison.Ordinal)))
+            throw new InvalidDataException("Upstream exec-server package option changed; review the builder contract.");
+        return count == 1;
+    }
+
     private static object InspectBrowser(string file)
     {
         file = Path.GetFullPath(file);
@@ -104,13 +116,20 @@ internal static class Program
         })
             if (metadata.GetProperty(key).GetString() != expected)
                 throw new InvalidDataException($"Invalid package {key}: expected {expected}.");
-        foreach (var relative in PackageFiles)
+        var packageFiles = PackageFiles.ToList();
+        if (metadata.TryGetProperty("execServer", out var execServer))
+        {
+            if (execServer.GetString() != "bin/codex-exec-server.exe")
+                throw new InvalidDataException("Invalid package execServer path.");
+            packageFiles.Add("bin/codex-exec-server.exe");
+        }
+        foreach (var relative in packageFiles)
             if (!File.Exists(Path.Combine(root, relative)))
                 throw new FileNotFoundException($"Required package file is missing: {relative}");
         return new
         {
             root, layoutVersion = 1, version = metadata.GetProperty("version").GetString(),
-            files = PackageFiles.Select(relative => new { path = relative, sha256 = Hash(Path.Combine(root, relative)) }).ToArray(),
+            files = packageFiles.Select(relative => new { path = relative, sha256 = Hash(Path.Combine(root, relative)) }).ToArray(),
             filesChanged = false
         };
     }
@@ -145,6 +164,9 @@ internal static class Program
             ["--rg-bin"] = "codex-resources/rg.exe", ["--codex-command-runner-bin"] = "codex-resources/codex-command-runner.exe",
             ["--codex-windows-sandbox-setup-bin"] = "codex-resources/codex-windows-sandbox-setup.exe"
         };
+        var requiresExecServer = RequiresExecServer(upstream);
+        if (requiresExecServer)
+            inputs["--exec-server-bin"] = "codex-resources/codex-exec-server.exe";
         var hashes = new Dictionary<string, string>();
         foreach (var relative in inputs.Values)
         {
@@ -157,6 +179,8 @@ internal static class Program
         };
         start.Environment["CODEX_REPO_ROOT"] = upstream;
         start.ArgumentList.Add(builder);
+        start.ArgumentList.Add("--cargo");
+        start.ArgumentList.Add(Path.Combine(Path.GetTempPath(), "codex-package-no-build-" + Guid.NewGuid().ToString("N")));
         foreach (var argument in new[] { "--target", "x86_64-pc-windows-msvc", "--variant", "codex",
             "--package-version", version, "--package-dir", destination })
             start.ArgumentList.Add(argument);
@@ -181,6 +205,8 @@ internal static class Program
             ["codex-resources/rg.exe"] = "codex-path/rg.exe", ["codex-resources/codex-command-runner.exe"] = "codex-resources/codex-command-runner.exe",
             ["codex-resources/codex-windows-sandbox-setup.exe"] = "codex-resources/codex-windows-sandbox-setup.exe"
         };
+        if (requiresExecServer)
+            mapping["codex-resources/codex-exec-server.exe"] = "bin/codex-exec-server.exe";
         foreach (var (oldPath, newPath) in mapping)
             if (Hash(Path.Combine(legacy, oldPath)) != hashes[oldPath] || Hash(Path.Combine(destination, newPath)) != hashes[oldPath])
                 throw new IOException($"Binary identity changed while repackaging: {oldPath}");

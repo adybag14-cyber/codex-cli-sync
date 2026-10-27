@@ -1,5 +1,19 @@
 Set-StrictMode -Version Latest
 
+function Test-UpstreamExecServerPackage {
+    param([Parameter(Mandatory)][string]$SourceRoot)
+    $parserPath = Join-Path $SourceRoot 'scripts/codex_package/cli.py'
+    if (-not (Test-Path -LiteralPath $parserPath -PathType Leaf)) {
+        $parserPath = Join-Path $SourceRoot 'scripts/build_codex_package.py'
+    }
+    $source = [IO.File]::ReadAllText($parserPath)
+    $matches = [regex]::Matches($source, '\bparser\.add_argument\(\s*["'']--exec-server-bin["'']\s*,')
+    if ($matches.Count -gt 1 -or ($matches.Count -eq 0 -and $source.Contains('--exec-server-bin'))) {
+        throw 'Upstream exec-server package option changed; review the builder contract.'
+    }
+    return $matches.Count -eq 1
+}
+
 function New-WindowsCodexPackage {
     param(
         [Parameter(Mandatory = $true)][string]$SourceRoot,
@@ -14,6 +28,18 @@ function New-WindowsCodexPackage {
     if (-not (Test-Path -LiteralPath $builder -PathType Leaf)) {
         throw "Upstream canonical package builder is missing: $builder"
     }
+    $requiresExecServer = Test-UpstreamExecServerPackage -SourceRoot $SourceRoot
+    $extraArguments = @()
+    if ($requiresExecServer) {
+        $execServer = Join-Path $BinaryDir 'codex-exec-server.exe'
+        if (-not (Test-Path -LiteralPath $execServer -PathType Leaf)) {
+            throw 'The upstream package requires a prebuilt codex-exec-server.exe.'
+        }
+        $extraArguments += @('--exec-server-bin', $execServer)
+    }
+    # A future required component must fail immediately instead of silently
+    # invoking Cargo during package assembly or a disposable contract test.
+    $disabledCargo = Join-Path ([IO.Path]::GetTempPath()) ('codex-package-no-build-' + [guid]::NewGuid().ToString('N'))
     # All inputs are prebuilt; the upstream builder neither compiles nor downloads.
     # Do not pass --force: an occupied destination must not be deleted implicitly.
     $previousRepoRoot = $env:CODEX_REPO_ROOT
@@ -25,7 +51,7 @@ function New-WindowsCodexPackage {
             --code-mode-host-bin (Join-Path $BinaryDir 'codex-code-mode-host.exe') `
             --codex-command-runner-bin (Join-Path $BinaryDir 'codex-command-runner.exe') `
             --codex-windows-sandbox-setup-bin (Join-Path $BinaryDir 'codex-windows-sandbox-setup.exe') `
-            --rg-bin $RipgrepPath | Out-Host
+            --rg-bin $RipgrepPath --cargo $disabledCargo @extraArguments | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Upstream canonical package builder failed with exit code $LASTEXITCODE"
         }
@@ -46,6 +72,13 @@ function New-WindowsCodexPackage {
         'codex-resources/codex-command-runner.exe' = (Join-Path $BinaryDir 'codex-command-runner.exe')
         'codex-resources/codex-windows-sandbox-setup.exe' = (Join-Path $BinaryDir 'codex-windows-sandbox-setup.exe')
         'codex-path/rg.exe' = $RipgrepPath
+    }
+    if ($requiresExecServer) {
+        if ($manifest.PSObject.Properties.Name -notcontains 'execServer' -or
+            $manifest.execServer -cne 'bin/codex-exec-server.exe') {
+            throw 'Upstream exec-server package path changed; review the layout contract.'
+        }
+        $inputs['bin/codex-exec-server.exe'] = $execServer
     }
     foreach ($relative in $inputs.Keys) {
         $packaged = Join-Path $Destination $relative

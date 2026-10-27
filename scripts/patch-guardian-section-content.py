@@ -11,6 +11,7 @@ import re
 SOURCE = "codex-rs/guardian-context/src/retained_instructions.rs"
 COMPOSITION = "codex-rs/guardian-context/src/composition.rs"
 PROFILE = "codex-rs/guardian-context/src/profile.rs"
+PROFILE_PATHS = (PROFILE, "codex-rs/guardian-context/src/preparation/transcript.rs")
 CACHE_TEST = "codex-rs/guardian-context/tests/cache_prefix.rs"
 
 
@@ -74,6 +75,15 @@ def patched_cache_test(text, profile):
     return text.replace("profile.render_transcript(", "profile.prepare_transcript(")
 
 
+def profile_source(root):
+    candidates = [root / relative for relative in PROFILE_PATHS if (root / relative).is_file()]
+    if not candidates:
+        raise ValueError("Guardian profile source is missing from the reviewed layouts")
+    if len(candidates) != 1:
+        raise ValueError("Guardian profile source is ambiguous across reviewed layouts")
+    return candidates[0]
+
+
 def patch(root):
     source = root / SOURCE
     if not source.is_file():
@@ -86,9 +96,7 @@ def patch(root):
     planned = {source: (text, patched_source(text, composition_path.read_bytes().decode("utf-8")))}
     cache_test = root / CACHE_TEST
     if cache_test.is_file():
-        profile = root / PROFILE
-        if not profile.is_file():
-            raise ValueError("Guardian profile source is missing")
+        profile = profile_source(root)
         original_test = cache_test.read_bytes().decode("utf-8")
         planned[cache_test] = (original_test, patched_cache_test(original_test, profile.read_bytes().decode("utf-8")))
     written = []
