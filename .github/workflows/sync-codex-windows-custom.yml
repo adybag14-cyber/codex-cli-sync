@@ -82,6 +82,9 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.run_target != 'linux-i686-musl' }}
     runs-on: windows-2025
     timeout-minutes: 240
+    env:
+      # rusty_v8 vendors snapshot paths that exceed MAX_PATH under USERPROFILE.
+      CARGO_HOME: D:/c
 
     steps:
       - name: Check Out Repository
@@ -92,6 +95,8 @@ jobs:
       - name: Prepare Rust Toolchain
         shell: pwsh
         run: |
+          git config --global core.longpaths true
+          if ($LASTEXITCODE -ne 0) { throw 'Could not enable long Git paths.' }
           rustup target add x86_64-pc-windows-msvc
           rustc --version
           cargo --version
@@ -135,20 +140,20 @@ jobs:
         continue-on-error: true
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ${{ env.CARGO_HOME }}/registry
+            ${{ env.CARGO_HOME }}/git
             out/codex-upstream/codex-rs/target
             out/rusty-v8
-          key: windows-codex-custom-cargo-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/*.ps1', 'state/latest-custom-main-sha.txt') }}
+          key: windows-codex-custom-cargo-v2-shortpaths-${{ runner.os }}-${{ hashFiles('.github/workflows/sync-codex-windows-custom.yml', 'scripts/*.ps1', 'state/latest-custom-main-sha.txt') }}
           restore-keys: |
-            windows-codex-custom-cargo-${{ runner.os }}-
+            windows-codex-custom-cargo-v2-shortpaths-${{ runner.os }}-
 
       - name: Remove Incomplete Cargo Cache Locks
         shell: pwsh
         run: |
           $paths = @(
-            (Join-Path $HOME '.cargo\.package-cache'),
-            (Join-Path $HOME '.cargo\registry\index\index.crates.io-*\.cache\*.lock')
+            (Join-Path $env:CARGO_HOME '.package-cache'),
+            (Join-Path $env:CARGO_HOME 'registry\index\index.crates.io-*\.cache\*.lock')
           )
           foreach ($path in $paths) {
             Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
@@ -358,8 +363,8 @@ jobs:
         continue-on-error: true
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ${{ env.CARGO_HOME }}/registry
+            ${{ env.CARGO_HOME }}/git
             out/codex-upstream/codex-rs/target
             out/rusty-v8
           key: ${{ steps.cargo-cache-restore.outputs.cache-primary-key }}

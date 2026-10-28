@@ -157,8 +157,11 @@ jobs:
         ref:
           - 5b0b2530354052b9194156d70d4c94a439368342
           - cf2c04b325e1929732727e7776243226fbbe19bc
+          - bea47c06dfac12ecce362090418e12a6faeedbf9
           - main
     env:
+      # Keep native Cargo's rusty_v8 checkout below legacy Windows path limits.
+      CARGO_HOME: D:/c
       CARGO_BUILD_JOBS: '4'
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
@@ -166,6 +169,11 @@ jobs:
       CARGO_TARGET_DIR: ${{ github.workspace }}/out/guardian-target
     steps:
       - uses: actions/checkout@v6
+      - name: Enable Long Git Paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          if ($LASTEXITCODE -ne 0) { throw 'Could not enable long Git paths.' }
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -179,12 +187,12 @@ jobs:
         continue-on-error: true
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ${{ env.CARGO_HOME }}/registry
+            ${{ env.CARGO_HOME }}/git
             out/guardian-target
-          key: windows-guardian-${{ matrix.ref }}-${{ hashFiles('out/guardian-upstream/codex-rs/Cargo.lock') }}
+          key: windows-guardian-v2-shortpaths-${{ matrix.ref }}-${{ hashFiles('out/guardian-upstream/codex-rs/Cargo.lock') }}
           restore-keys: |
-            windows-guardian-${{ matrix.ref }}-
+            windows-guardian-v2-shortpaths-${{ matrix.ref }}-
       - name: Patch and compile the complete Guardian context test suite
         shell: pwsh
         run: |
