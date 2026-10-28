@@ -35,6 +35,7 @@ Linux sandbox socket syscall keys are widened independently of their rule payloa
 Fresh runner checkouts preserve restored `codex-rs/target` caches. The bootstrap accepts only an empty directory or that cache-only layout, initializes Git there, and fetches/checks out the exact upstream commit; unexpected existing files are rejected instead of deleted. Local Git fixtures verify both source provenance and preservation of a cached sentinel on both runner platforms.
 
 Windows release and native Guardian test jobs use `D:/c` as `CARGO_HOME` and enable Git's long-path support on the hosted runner. This keeps deeply nested `rusty_v8` dependency files out of the longer default user-profile path. Both cache restoration and saving use the short location with a separate cache namespace; cache-lock cleanup follows the same location. The Guardian matrix includes upstream `bea47c06dfac12ecce362090418e12a6faeedbf9`, which exposed the Windows checkout failure, alongside current upstream `main`.
+
 For ChatGPT login, the patcher uses flexible anchors around the login callback constants and bind fallback logic so routine upstream formatting/comment changes do not drop the Windows-safe callback-port fix.
 For Windows sandbox onboarding, the patcher recognizes both the legacy and current upstream forms, preserves newly-added trust conditions as a deliberately-unused expression, and treats an upstream-removed hint as already satisfied instead of failing on a vanished text anchor.
 For OpenAI request compatibility, the patcher preserves `content_item_kinds` annotations in internal history but removes that newer member from provider request payloads until the OpenAI request schema accepts it. The workflow runs the focused upstream request integration test after patching, which also proves that approved `turn_id` and `create_time` metadata remain intact.
@@ -75,8 +76,8 @@ commit run before optional Cargo-cache saving. Cache restore is bounded to ten
 minutes and saving to thirty minutes; cache failures are non-fatal and cancelled
 runs do not start another save. The Windows job allows four hours, with a
 three-hour build/package limit that leaves time for publication and cache
-maintenance. Cache paths and restore prefixes are preserved so existing compiled
-outputs remain reusable.
+maintenance. Compiled outputs remain reusable within the current short-path
+cache namespace; archives from the previous user-profile layout are not restored.
 
 Windows packaging resolves ripgrep **before** Cargo tests and compilation. The
 GitHub API request uses `GH_TOKEN` or `GITHUB_TOKEN` when provided; Actions passes
