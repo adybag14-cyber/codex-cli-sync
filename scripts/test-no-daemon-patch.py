@@ -48,7 +48,75 @@ pub fn maintain_stderr_log() -> Result<()> {
     return values
 
 
+def remote_guard_fixture():
+    values = current_fixture()
+    values[patcher.FILES[3]] = values[patcher.FILES[3]].replace(
+        '    if interactive.no_daemon {\n    }',
+        '    if interactive.no_daemon && remote.is_some() {\n'
+        '        return Ok(AppExitInfo::fatal("--no-daemon cannot be used with --remote."));\n'
+        '    }')
+    return values
+
+
 class Contracts(unittest.TestCase):
+    def test_reviewed_launch_layouts_preserve_remote_validation_and_replay(self):
+        for make_fixture in (fixture, remote_guard_fixture):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(layout=make_fixture.__name__, newline=newline), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    values = make_fixture()
+                    for name, text in values.items():
+                        (root / name).parent.mkdir(parents=True, exist_ok=True)
+                        (root / name).write_bytes(text.replace("\n", newline).encode())
+                    patcher.patch(root)
+                    first = {name: (root / name).read_bytes() for name in values}
+                    cli = first[patcher.FILES[3]].decode().replace("\r\n", "\n")
+                    insertion = (f'    {patcher.MARKER}\n'
+                                 '    if remote.is_none() {\n'
+                                 '        interactive.no_daemon = true;\n'
+                                 '        interactive.daemon_cli_executable = None;\n'
+                                 '    }\n')
+                    self.assertIn('-> std::io::Result<AppExitInfo> {\n' + insertion, cli)
+                    original_tail = values[patcher.FILES[3]].split('    if interactive.no_daemon', 1)[1]
+                    self.assertIn('    if interactive.no_daemon' + original_tail.split(
+                        '        Some(Subcommand::AppServer', 1)[0], cli)
+                    patcher.patch(root)
+                    self.assertEqual(first, {name: (root / name).read_bytes() for name in values})
+                    if newline == "\r\n":
+                        self.assertTrue(all(b"\n" not in value.replace(b"\r\n", b"") for value in first.values()))
+
+    def test_launch_drift_never_partially_writes(self):
+        for make_fixture in (fixture, remote_guard_fixture):
+            for drift in ("renamed-function", "unknown-condition", "early-side-effect",
+                          "duplicate-function", "mixed-layouts", "misplaced-marker", "duplicate-marker"):
+                with self.subTest(layout=make_fixture.__name__, drift=drift), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    values = make_fixture()
+                    cli = patcher.FILES[3]
+                    if drift == "renamed-function":
+                        values[cli] = values[cli].replace("run_interactive_tui", "other_tui")
+                    elif drift == "unknown-condition":
+                        values[cli] = values[cli].replace("if interactive.no_daemon", "if interactive.managed_daemon")
+                    elif drift == "early-side-effect":
+                        values[cli] = values[cli].replace("    if interactive.no_daemon", "    start_daemon();\n    if interactive.no_daemon")
+                    elif drift == "duplicate-function":
+                        values[cli] *= 2
+                    elif drift == "mixed-layouts":
+                        other = remote_guard_fixture if make_fixture is fixture else fixture
+                        values[cli] += other()[cli]
+                    elif drift == "misplaced-marker":
+                        values[cli] += "\n" + patcher.MARKER + "\n"
+                    else:
+                        values = patcher.patched_sources(values)
+                        values[cli] += "\n" + patcher.MARKER + "\n"
+                    for name, text in values.items():
+                        (root / name).parent.mkdir(parents=True, exist_ok=True)
+                        (root / name).write_bytes(text.encode())
+                    before = {name: (root / name).read_bytes() for name in values}
+                    with self.assertRaisesRegex(ValueError, "interactive local launch"):
+                        patcher.patch(root)
+                    self.assertEqual(before, {name: (root / name).read_bytes() for name in values})
+
     def test_repeat_application_preserves_bytes_and_line_endings(self):
         for newline in ("\n", "\r\n"):
             with self.subTest(newline=newline), tempfile.TemporaryDirectory() as directory:

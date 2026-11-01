@@ -40,6 +40,34 @@ def check_entry_guard(text, name):
         raise ValueError(f"Daemon entry point lost its first-operation guard: {name}")
 
 
+def patch_interactive_launch(text):
+    headers = re.findall(
+        r"^async fn run_interactive_tui\([^{};]*\) -> std::io::Result<AppExitInfo> \{\n",
+        text, re.M)
+    if len(headers) != 1:
+        raise ValueError("Unsupported upstream source: interactive local launch function")
+    header = headers[0]
+    insertion = (f'    {MARKER}\n'
+                 '    if remote.is_none() {\n'
+                 '        interactive.no_daemon = true;\n'
+                 '        interactive.daemon_cli_executable = None;\n'
+                 '    }\n')
+    # Upstream removed the agents-overview rejection and flattened the remote
+    # conflict check. Keep that validation intact in both reviewed layouts.
+    layouts = [header + guard for guard in (
+        '    if interactive.no_daemon {',
+        '    if interactive.no_daemon && remote.is_some() {',
+    )]
+    candidates = [(before, before.replace(header, header + insertion, 1)) for before in layouts]
+    matches = [(before, after) for before, after in candidates if before in text or after in text]
+    if len(matches) != 1:
+        raise ValueError("Unsupported upstream source: interactive local launch prologue")
+    before, after = matches[0]
+    if text.count(MARKER) != int(after in text):
+        raise ValueError("Unsupported upstream source: interactive local launch marker")
+    return replace_once(text, before, after, "interactive local launch")
+
+
 def patched_sources(sources):
     result = dict(sources)
     daemon = "codex-rs/app-server-daemon/src/lib.rs"
@@ -87,15 +115,7 @@ def patched_sources(sources):
     result[daemon] = replace_once(result[daemon], before, after, "daemon lifecycle guard")
 
     cli = "codex-rs/cli/src/main.rs"
-    before = ") -> std::io::Result<AppExitInfo> {\n    if interactive.no_daemon {"
-    after = (') -> std::io::Result<AppExitInfo> {\n'
-             f'    {MARKER}\n'
-             '    if remote.is_none() {\n'
-             '        interactive.no_daemon = true;\n'
-             '        interactive.daemon_cli_executable = None;\n'
-             '    }\n'
-             '    if interactive.no_daemon {')
-    result[cli] = replace_once(result[cli], before, after, "interactive local launch")
+    result[cli] = patch_interactive_launch(result[cli])
     before = "        Some(Subcommand::AppServer(app_server_cli)) => {\n            let AppServerCommand {"
     after = ("        Some(Subcommand::AppServer(app_server_cli)) => {\n"
              "            if app_server_cli.managed_daemon {\n"
