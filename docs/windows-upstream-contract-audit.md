@@ -85,6 +85,27 @@ including replacements that retain their original anchor. Duplicate or misplaced
 edits fail instead of accumulating more copies. Eight additional LF/CRLF
 contracts and byte-for-byte full-patch replay run across the source matrix.
 
+## November 1 interactive launch compatibility
+
+Upstream `67f0994b532b8740f14b5b738af7b7b2a915b1d6` starts
+`run_interactive_tui` with `if interactive.no_daemon && remote.is_some()` after
+removing the agents-overview rejection. The previous daemon-removal patch only
+recognized the older `if interactive.no_daemon` block, so both Windows and Linux
+stopped before compilation in [run 41279530481](https://github.com/adybag14-cyber/codex-cli-sync/actions/runs/41279530481).
+
+The shared patch now accepts both reviewed prologues in exactly one named
+`run_interactive_tui` function. Local launches still select the embedded server
+and clear the daemon executable; explicit remote launches retain upstream's
+validation. Unknown conditions, renamed or duplicate functions, side effects
+before the prologue, and misplaced or duplicate markers fail before any source
+write. LF/CRLF replay and a late CLI drift scenario cover these boundaries.
+
+The failing upstream revision is pinned in the source matrix alongside live
+`main`. Source identities are recorded before patch application so failed jobs
+also retain the exact revision. Local validation passed 185 compatibility
+contracts, seven real-source transaction scenarios, and package contracts on
+this revision; native build and runtime checks remain separate release gates.
+
 The supported response to an unfamiliar structural or semantic change is to
 stop publication, inspect the exact upstream change, update the transformation
 and its regression coverage, and pass a fresh native Windows build and runtime

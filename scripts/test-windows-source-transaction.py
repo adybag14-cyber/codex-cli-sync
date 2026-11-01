@@ -30,7 +30,8 @@ def main():
     if not raw:
         raise AssertionError('No upstream transaction inputs discovered')
 
-    scenarios = ['late-daemon-export-drift', 'ambiguous-permissions', 'higher-recursion-limit', 'repeat-complete-patch']
+    scenarios = ['late-daemon-export-drift', 'late-cli-launch-drift', 'ambiguous-permissions',
+                 'higher-recursion-limit', 'repeat-complete-patch']
     guardian_path = 'codex-rs/guardian-context/src/retained_instructions.rs'
     guardian_profiles = ('codex-rs/guardian-context/src/profile.rs',
                          'codex-rs/guardian-context/src/preparation/transcript.rs')
@@ -46,6 +47,8 @@ def main():
                     continue
                 if scenario == 'late-daemon-export-drift' and path == 'codex-rs/app-server-daemon/src/lib.rs':
                     value += b'\npub mod unreviewed_autostart;\n'
+                if scenario == 'late-cli-launch-drift' and path == 'codex-rs/cli/src/main.rs':
+                    value = value.replace(b'async fn run_interactive_tui(', b'async fn unreviewed_interactive_tui(', 1)
                 if scenario == 'ambiguous-permissions' and path == 'codex-rs/core/src/config/mod.rs':
                     value += b'\npermissions: Permissions {}\n'
                 if scenario == 'guardian-constructor-drift' and path == guardian_path:
@@ -86,6 +89,7 @@ def main():
                         raise AssertionError(f'Complete patch reapplication failed or changed bytes: {repeated.stdout}{repeated.stderr}')
             else:
                 diagnostic = {'late-daemon-export-drift': 'public exports changed',
+                              'late-cli-launch-drift': 'interactive local launch function',
                               'ambiguous-permissions': 'Multiple permission constructors',
                               'missing-guardian-profile': 'Guardian profile source is missing',
                               'ambiguous-guardian-profile': 'Guardian profile source is ambiguous',
