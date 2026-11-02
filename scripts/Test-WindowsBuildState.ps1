@@ -2,6 +2,10 @@ function Get-WindowsBuildRecipeFingerprint {
     param([string]$RepositoryRoot)
     $root = [IO.Path]::GetFullPath($RepositoryRoot)
     $inputs = @(Get-ChildItem -LiteralPath (Join-Path $root 'scripts') -File | Where-Object { $_.Extension -in @('.ps1', '.py', '.cjs') })
+    $overlay = Join-Path $root 'patches/harnessmm'
+    if (Test-Path -LiteralPath $overlay) {
+        $inputs += @(Get-ChildItem -LiteralPath $overlay -File -Recurse)
+    }
     $doctor = Join-Path $root 'tools/CodexSyncDoctor'
     if (Test-Path -LiteralPath $doctor) {
         $inputs += @(Get-ChildItem -LiteralPath $doctor -File -Recurse | Where-Object {

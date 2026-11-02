@@ -5,7 +5,10 @@ param(
     [string]$WindowsTarget = "x86_64-pc-windows-msvc",
     [string]$StateDir = (Join-Path $PSScriptRoot "..\state"),
     [string]$WorkspaceDir = (Join-Path $PSScriptRoot "..\out"),
-    [switch]$Force
+    [switch]$Force,
+    # A/B builds use identical custom patches and omit only the HarnessMM overlay.
+    [switch]$WithoutHarnessMm,
+    [DateTimeOffset]$BuildTimestamp = [DateTimeOffset]::UtcNow
 )
 
 Set-StrictMode -Version Latest
@@ -318,11 +321,13 @@ if (Test-Path -LiteralPath (Join-Path $sourceDir ".git") -PathType Container) {
 }
 
 $versionResolution = Resolve-CodexCustomVersion -CargoTomlPath (Join-Path $sourceDir 'codex-rs\Cargo.toml') `
-    -UpstreamRef $UpstreamRef -RemoteUrl $remoteUrl
+    -UpstreamRef $UpstreamRef -RemoteUrl $remoteUrl -Timestamp $BuildTimestamp
 $customVersion = $versionResolution.custom_version
 Write-Host "Custom version $customVersion resolved from $($versionResolution.source); stable tag: $($versionResolution.latest_stable_tag)."
 Write-ActionOutput -Name "custom_version" -Value $customVersion
 $buildRecipeFingerprint = Get-WindowsBuildRecipeFingerprint -RepositoryRoot (Split-Path -Parent $scriptRoot)
+$recipeBytes = [Text.Encoding]::UTF8.GetBytes($buildRecipeFingerprint + '|harnessmm=' + (-not $WithoutHarnessMm))
+$buildRecipeFingerprint = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($recipeBytes)).ToLowerInvariant()
 $previousState = $null
 if (Test-Path -LiteralPath $latestStatePath -PathType Leaf) {
     try { $previousState = Get-Content -LiteralPath $latestStatePath -Raw | ConvertFrom-Json }
@@ -339,6 +344,10 @@ Set-PackageJsonVersionIfPresent -PackageJsonPath (Join-Path $sourceDir "codex-cl
 
 try {
     & (Join-Path $scriptRoot "patch-codex-windows-custom.ps1") -SourceRoot $sourceDir
+    if (-not $WithoutHarnessMm) {
+        & python (Join-Path $scriptRoot 'patch-codex-harnessmm.py') --source-root $sourceDir
+        if ($LASTEXITCODE -ne 0) { throw 'Native HarnessMM patch failed.' }
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "Custom patch script failed with exit code $LASTEXITCODE."
     }
@@ -405,6 +414,9 @@ try {
         }
         Invoke-CargoContractTest -Package codex-core -Filter $compatibilityTest -Exact `
             -ReportPath (Join-Path $WorkspaceDir 'request-metadata-test-selection.json')
+        if (-not $WithoutHarnessMm) {
+            & (Join-Path $scriptRoot 'test-harnessmm-native.ps1') -ReportPath (Join-Path $WorkspaceDir 'harnessmm-test-selection.json')
+        }
         # Exercise actual dynamic tool calls and content responses against the upstream mock server.
         Invoke-CargoContractTest -Package codex-app-server -Filter 'suite::v2::dynamic_tools::' `
             -ReportPath (Join-Path $WorkspaceDir 'dynamic-tool-test-selection.json')
@@ -552,6 +564,7 @@ $manifest = [ordered]@{
     rolling_tag        = $rollingTag
     patch_status       = "applied"
     custom_patches_failed = $false
+    harnessmm          = [ordered]@{ included = (-not $WithoutHarnessMm); default_enabled = $false; protocol = 'literal-terminal-v1' }
     artifact           = [ordered]@{
         name   = [System.IO.Path]::GetFileName($bundlePath)
         sha256 = $bundleSha256
