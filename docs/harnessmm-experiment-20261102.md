@@ -1,5 +1,11 @@
 # Native HarnessMM: real Actions-repair comparison
 
+This report preserves the tested configuration and results. A subsequent user
+request changed the custom-build default to enabled and added the
+[HarnessMM Cue skill](../skills/harnessmm-cue/SKILL.md). See the
+[current usage documentation](harnessmm.md); the historical measurements below
+have not been relabelled as a test of a different binary.
+
 The native mechanism worked on the real repair task when the actor was explicitly
 cued to use it. In that guided pair, total reported actor tokens fell **54.79%**,
 model requests fell from **17 to 10**, and both solutions passed the independent

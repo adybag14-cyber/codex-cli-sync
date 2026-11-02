@@ -6,6 +6,10 @@ function Get-WindowsBuildRecipeFingerprint {
     if (Test-Path -LiteralPath $overlay) {
         $inputs += @(Get-ChildItem -LiteralPath $overlay -File -Recurse)
     }
+    $harnessSkill = Join-Path $root 'skills/harnessmm-cue'
+    if (Test-Path -LiteralPath $harnessSkill) {
+        $inputs += @(Get-ChildItem -LiteralPath $harnessSkill -File -Recurse)
+    }
     $doctor = Join-Path $root 'tools/CodexSyncDoctor'
     if (Test-Path -LiteralPath $doctor) {
         $inputs += @(Get-ChildItem -LiteralPath $doctor -File -Recurse | Where-Object {

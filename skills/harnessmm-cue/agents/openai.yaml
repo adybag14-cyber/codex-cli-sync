@@ -1,0 +1,4 @@
+interface:
+  display_name: "HarnessMM Cue"
+  short_description: "Reuse already-decided terminal validation steps"
+  default_prompt: "Use $harnessmm-cue for suitable already-decided validation steps in this task."

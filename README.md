@@ -69,8 +69,13 @@ Release layout:
 
 Manual `workflow_dispatch` runs expose `force`, `upstream_ref`, `run_target`, and `dry_run` inputs. `run_target` can isolate either failing build, while `dry_run` suppresses release/state mutations but still builds and uploads artifacts. The default upstream ref is `main`; OpenAI Codex does not currently publish a `master` branch.
 
-Windows builds also include an opt-in native [HarnessMM execution feature](docs/harnessmm.md)
-for reusing literal terminal decisions at model-call boundaries. It defaults off.
+Windows builds also include a native [HarnessMM execution feature](docs/harnessmm.md)
+for reusing literal terminal decisions at model-call boundaries. It defaults on;
+an explicit `features.harnessmm=false` override disables it. The repository-owned
+[HarnessMM Cue skill](skills/harnessmm-cue/SKILL.md) supports the natural request
+"use the HarnessMM cue skill" after starting `codex` normally. Run
+`scripts/Install-HarnessMmCue.ps1` once to install it in the user skills directory;
+Windows packages also bundle that skill and installer under `codex-resources`.
 The separate A/B workflow can omit the overlay for a matched control and never
 publishes releases. The [real Actions-repair experiment](docs/harnessmm-experiment-20261102.md)
 records both an unprompted run with no uptake and a guided run with actual native

@@ -5,6 +5,8 @@ on:
     paths:
       - patches/harnessmm/**
       - scripts/*harnessmm*
+      - scripts/Install-HarnessMmCue.ps1
+      - skills/harnessmm-cue/**
       - .github/workflows/harnessmm-ab.yml
   workflow_dispatch:
     inputs:
@@ -96,7 +98,7 @@ jobs:
           echo "timestamp=$BUILD_TIMESTAMP" >> "$GITHUB_OUTPUT"
           build_needed=true
           if [[ "$EVENT" == pull_request && "$ACTION" == synchronize && "$BEFORE" =~ ^[a-f0-9]{40}$ ]] && git cat-file -e "$BEFORE^{commit}"; then
-            if git diff --quiet "$BEFORE" HEAD -- patches scripts tools/CodexSyncDoctor .github/workflows/harnessmm-ab.yml .github/workflows/sync-codex-windows-custom.yml; then
+            if git diff --quiet "$BEFORE" HEAD -- patches scripts skills/harnessmm-cue tools/CodexSyncDoctor .github/workflows/harnessmm-ab.yml .github/workflows/sync-codex-windows-custom.yml; then
               build_needed=false
             fi
           fi

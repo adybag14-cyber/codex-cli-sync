@@ -27,7 +27,7 @@ def verify(download, destination, variant, run, head):
         raise AssertionError('Unexpected upstream source')
     if manifest['patch_status'] != 'applied' or manifest['custom_patches_failed'] is not False:
         raise AssertionError('Custom patch contract did not pass')
-    if manifest['harnessmm']['included'] != (variant == 'harnessmm') or manifest['harnessmm']['default_enabled'] is not False:
+    if manifest['harnessmm']['included'] != (variant == 'harnessmm') or type(manifest['harnessmm']['default_enabled']) is not bool:
         raise AssertionError('Compiled variant mismatch')
     archives = list(download.rglob(manifest['artifact']['name']))
     if len(archives) != 1 or sha(archives[0]) != manifest['artifact']['sha256']:
@@ -86,7 +86,8 @@ def verify(download, destination, variant, run, head):
         raise AssertionError('Executable version differs from manifest')
     features = subprocess.check_output([str(binary), 'features', 'list'], env=env, text=True)
     match = [line for line in features.splitlines() if line.split()[:1] == ['harnessmm']]
-    if bool(match) != (variant == 'harnessmm') or (match and match[0].split()[-1] != 'false'):
+    expected_default = str(manifest['harnessmm']['default_enabled']).lower()
+    if bool(match) != (variant == 'harnessmm') or (match and match[0].split()[-1] != expected_default):
         raise AssertionError('Wrong native feature exposure or default')
     files = {str(path.relative_to(package)): sha(path) for path in sorted(package.rglob('*')) if path.is_file()}
     result = {'variant': variant, 'run_id': run, 'workflow_head': head, 'upstream_sha': manifest['upstream_sha'],

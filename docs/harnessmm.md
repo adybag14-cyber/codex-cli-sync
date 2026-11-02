@@ -1,11 +1,20 @@
 # Native HarnessMM experiment
 
 Predictable terminal transitions repeatedly resend context and invoke the model
-even when their exact commands are already known. The opt-in `harnessmm` feature
+even when their exact commands are already known. The `harnessmm` feature
 lets the actor register 2–8 literal commands through `harnessmm_plan`. Codex
 executes one command at each ordinary sampling boundary, retaining the original
 provider, authentication, native tool dispatcher, hooks and cancellation path.
-The feature defaults off. Enable an included build with `-c features.harnessmm=true`.
+The feature defaults on in custom Windows builds. An explicit
+`-c features.harnessmm=false` disables it for an invocation.
+
+Install the repository-owned cue skill with `scripts/Install-HarnessMmCue.ps1`.
+Then start `codex` normally and say **"Use the HarnessMM cue skill"** with your
+task, or invoke `$harnessmm-cue`. The skill identifies suitable already-decided
+validation sequences, calls the native tool directly, and handles fallback.
+It remains available in the normal user skills directory across CLI upgrades.
+Included Windows packages also carry the skill and installer under
+`codex-resources`; the installer preserves locally modified skill files.
 
 This implementation takes inspiration from [HarnessMM](https://github.com/YuhuaJiang2002/HarnessMM)
 at `c8f19947e59feaa8103c05155bd79ef3eb084730` and
@@ -72,8 +81,8 @@ for four native commands, made 10 versus 17 model requests, and used 54.79% fewe
 reported tokens while both solutions passed the independent checks. This is one
 guided pair and includes trajectory differences, not a universal saving.
 
-See the [complete experiment report](harnessmm-experiment-20261102.md), including
+See the [complete historical experiment report](harnessmm-experiment-20261102.md), including
 cached-token accounting, the unprompted result, withheld-quality findings,
 artifact/source bindings and trace evidence. Use the
-[tested cue](../analysis/harnessmm/guided-cue.txt) with the opt-in feature; the flag
-alone did not reliably produce uptake in the tested normal workflow.
+[cue skill](../skills/harnessmm-cue/SKILL.md) to apply the tested guidance; feature
+availability alone did not reliably produce uptake in the original experiment.
