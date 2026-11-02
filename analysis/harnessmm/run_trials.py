@@ -100,6 +100,7 @@ hooks = true
     for key in ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_API_KEY', 'GITHUB_TOKEN', 'GH_TOKEN']:
         env.pop(key, None)
     env.update(CODEX_HOME=str(home), RUST_LOG='codex_core::harnessmm=info')
+    env['PATH'] = str(binary.parent) + os.pathsep + env.get('PATH', '')
     trust_owned_hooks(binary, home, workspace, env)
     args = [str(binary), 'exec', '--json', '--skip-git-repo-check',
             '-C', str(workspace), '--output-last-message', str(folder / 'final.txt'), '-']
