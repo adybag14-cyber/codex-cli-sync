@@ -18,6 +18,11 @@ on:
         type: string
         default: '2026-11-02T16:54:00Z'
         required: true
+      variant:
+        description: Rebuild one arm when the other verified source is unchanged
+        type: choice
+        options: [both, baseline, harnessmm]
+        default: both
 
 permissions:
   contents: read
@@ -86,7 +91,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [baseline, harnessmm]
+        variant: ${{ fromJSON(inputs.variant == 'baseline' && '["baseline"]' || inputs.variant == 'harnessmm' && '["harnessmm"]' || '["baseline","harnessmm"]') }}
     runs-on: windows-2025
     timeout-minutes: 240
     env:
