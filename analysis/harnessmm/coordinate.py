@@ -77,14 +77,17 @@ class Coordinator:
             if result['workflow_head'] != head or result['binary_sha256'] != sha(Path(result['binary'])):
                 raise AssertionError('A retained package changed')
             return result
-        download.mkdir(parents=True, exist_ok=True)
-        self.update('downloading', run=run, variant=variant)
-        result = subprocess.run(['gh', 'run', 'download', str(run), '--repo', 'adybag14-cyber/codex-cli-sync',
-                                 '--name', f'harnessmm-ab-{variant}', '--dir', str(download)],
-                                capture_output=True, text=True, timeout=600,
-                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        if result.returncode:
-            raise RuntimeError('Artifact download failed: '+result.stderr[-1500:])
+        # A connector download is delivered by unpack_actions.py. Keeping the
+        # transport outside this owner avoids gh's observed large-artifact stall.
+        if not (download / 'artifact-provenance.json').exists():
+            self.update('download_required', run=run, variant=variant, head=head,
+                        artifact_name=f'harnessmm-ab-{variant}')
+            while not (download / 'artifact-provenance.json').exists():
+                self.admission()
+                time.sleep(10)
+        provenance = json.loads((download / 'artifact-provenance.json').read_text())
+        if provenance['workflow_run']['id'] != run or provenance['workflow_run']['head_sha'] != head:
+            raise AssertionError('Delivered artifact is not bound to the expected workflow head')
         self.update('verifying', run=run, variant=variant)
         return verify(download, destination, variant, run, head)
 
@@ -93,6 +96,11 @@ class Coordinator:
         self.update('native_smoke', variant=variant)
         output = self.root / 'native-smoke' / package['workflow_head'] / variant
         cases = ['success', 'disabled', 'failed', 'spoofed_stdout', 'rewrite', 'blocked', 'metering'] if included else ['baseline', 'metering']
+        if (output / 'summary.json').exists():
+            retained = json.loads((output / 'summary.json').read_text())
+            if [row['case'] for row in retained] == cases and all(row['passed'] for row in retained):
+                return retained
+            raise AssertionError('Retained smoke evidence is incomplete')
         results = []
         for case in cases:
             self.admission()

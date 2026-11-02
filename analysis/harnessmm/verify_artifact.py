@@ -32,12 +32,21 @@ def verify(download, destination, variant, run, head):
     archives = list(download.rglob(manifest['artifact']['name']))
     if len(archives) != 1 or sha(archives[0]) != manifest['artifact']['sha256']:
         raise AssertionError('Downloaded ZIP does not match its manifest')
-    destination.mkdir(parents=True, exist_ok=False)
+    destination.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archives[0]) as archive:
         for name in archive.namelist():
             if not (destination / name).resolve().is_relative_to(destination.resolve()):
                 raise AssertionError('Archive path escapes the experimental destination')
-        archive.extractall(destination)
+        for entry in archive.infolist():
+            target = destination / entry.filename
+            if not entry.is_dir() and target.exists():
+                with archive.open(entry) as contents:
+                    expected = hashlib.file_digest(contents, 'sha256').hexdigest()
+                if sha(target) != expected:
+                    raise AssertionError('An existing extracted package file changed')
+        for entry in archive.infolist():
+            if not (destination / entry.filename).exists():
+                archive.extract(entry, destination)
     layouts = list(destination.rglob('codex-package.json'))
     if len(layouts) != 1:
         raise AssertionError('Missing or ambiguous canonical package')
@@ -70,6 +79,7 @@ def verify(download, destination, variant, run, head):
             raise AssertionError('HarnessMM native tests did not pass')
         reports[paths[0].name] = report
     env = os.environ.copy()
+    (destination / 'verification-home').mkdir(exist_ok=True)
     env['CODEX_HOME'] = str(destination / 'verification-home')
     version = subprocess.check_output([str(binary), '--version'], env=env, text=True).strip()
     if version != 'codex-cli ' + manifest['custom_version']:

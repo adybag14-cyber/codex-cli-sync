@@ -1,17 +1,19 @@
 """Run the frozen real-task pair sequentially in fresh Codex homes.
 
-Authentication is copied privately for the child and never written to reports.
+Authentication uses the native externally managed token mode in an isolated home.
+Only an unexpired access grant is copied; refresh authority stays in the original
+store. Credentials are never included in reports and are removed after the child.
 No production launcher, config, history, repository remote or release is changed.
 """
 from __future__ import annotations
 import argparse
+import base64
 from datetime import datetime, timezone
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import time
@@ -33,6 +35,25 @@ def atomic(path, value):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, indent=2), encoding='utf-8')
     temporary.replace(path)
+
+
+def write_external_auth(auth_home, destination, required_lifetime):
+    source = json.loads((auth_home / 'auth.json').read_text(encoding='utf-8-sig'))
+    tokens = source.get('tokens') or {}
+    if not all(tokens.get(key) for key in ['id_token', 'access_token', 'account_id']):
+        raise RuntimeError('File-based ChatGPT authentication is required for this isolated trial')
+    # Read expiry only; native/server validation retains responsibility for the
+    # credential's authenticity and account binding. Never log token contents.
+    payload = tokens['access_token'].split('.')[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4)))
+    remaining = int(claims['exp']) - time.time()
+    if remaining < required_lifetime + 300:
+        raise RuntimeError('Access grant expires too soon for the bounded trial; refresh through the original native login first')
+    isolated = {'auth_mode': 'chatgptAuthTokens', 'OPENAI_API_KEY': None,
+                'tokens': {'id_token': tokens['id_token'], 'access_token': tokens['access_token'],
+                           'account_id': tokens['account_id'], 'refresh_token': ''},
+                'last_refresh': datetime.now(timezone.utc).isoformat()}
+    destination.write_text(json.dumps(isolated), encoding='utf-8')
 
 
 def trust_owned_hooks(binary, home, cwd, env):
@@ -111,7 +132,7 @@ hooks = true
               'started_at': start, 'state': 'running', 'workspace': str(workspace)}
     started = time.monotonic()
     try:
-        shutil.copyfile(auth_home / 'auth.json', home / 'auth.json')
+        write_external_auth(auth_home, home / 'auth.json', timeout)
         with (folder / 'events.jsonl').open('w', encoding='utf-8') as out, (folder / 'stderr.log').open('w', encoding='utf-8') as err:
             child = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=out, stderr=err, env=env,
                                      creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
