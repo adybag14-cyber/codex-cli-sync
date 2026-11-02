@@ -131,7 +131,7 @@ fn checkpoint_matches(checkpoint: &Checkpoint, history: &ContextManager) -> bool
             }
             if !matches!(history.raw_items().last(),
                 Some(ResponseItem::FunctionCallOutput { call_id: actual, output, .. })
-                    if actual == call_id && output.success == Some(true))
+                    if actual.as_deref() == Some(call_id.as_str()) && output.success == Some(true))
             {
                 return false;
             }
@@ -203,6 +203,10 @@ pub(crate) async fn try_reuse(
         return Ok(false);
     };
     if cancellation.is_cancelled()
+        || step
+            .preempt
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
         || step.turn.mode() == ModeKind::Plan
         || !step
             .tool_router
