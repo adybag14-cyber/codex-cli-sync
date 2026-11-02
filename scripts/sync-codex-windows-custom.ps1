@@ -485,6 +485,12 @@ if (Test-Path -LiteralPath $manifestPath) {
 . (Join-Path $scriptRoot 'New-WindowsCodexPackage.ps1')
 $packageLayout = New-WindowsCodexPackage -SourceRoot $sourceDir -BinaryDir $targetDir `
     -RipgrepPath $ripgrepPath -Destination $payloadRoot -Version $customVersion -Target $WindowsTarget
+if (-not $WithoutHarnessMm) {
+    $skillDestination = Join-Path $payloadRoot 'codex-resources/skills/harnessmm-cue'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $skillDestination) -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $scriptRoot) 'skills/harnessmm-cue') -Destination $skillDestination -Recurse
+    Copy-Item -LiteralPath (Join-Path $scriptRoot 'Install-HarnessMmCue.ps1') -Destination (Join-Path $payloadRoot 'codex-resources/Install-HarnessMmCue.ps1')
+}
 Copy-Item -LiteralPath (Join-Path $WorkspaceDir 'request-metadata-test-selection.json') -Destination $payloadRoot
 Copy-Item -LiteralPath (Join-Path $WorkspaceDir 'dynamic-tool-test-selection.json') -Destination $payloadRoot
 if (Test-Path -LiteralPath (Join-Path $sourceDir 'codex-rs/guardian-context/Cargo.toml')) {
@@ -564,7 +570,7 @@ $manifest = [ordered]@{
     rolling_tag        = $rollingTag
     patch_status       = "applied"
     custom_patches_failed = $false
-    harnessmm          = [ordered]@{ included = (-not $WithoutHarnessMm); default_enabled = $false; protocol = 'literal-terminal-v1' }
+    harnessmm          = [ordered]@{ included = (-not $WithoutHarnessMm); default_enabled = (-not $WithoutHarnessMm); protocol = 'literal-terminal-v1'; cue_skill = $(if ($WithoutHarnessMm) { $null } else { 'codex-resources/skills/harnessmm-cue' }) }
     artifact           = [ordered]@{
         name   = [System.IO.Path]::GetFileName($bundlePath)
         sha256 = $bundleSha256

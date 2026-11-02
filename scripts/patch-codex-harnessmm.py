@@ -1,4 +1,4 @@
-"""Add opt-in native HarnessMM without replacing provider, auth or tool dispatch.
+"""Add default-enabled native HarnessMM without replacing provider, auth or tool dispatch.
 
 All source-shape checks complete before writes. Unknown and partial integrations
 reject. The overlay is repository-owned, and replay preserves exact source bytes.
@@ -15,7 +15,7 @@ EDITS = {
     ],
     "codex-rs/features/src/lib.rs": [
         ("pub enum Feature {", "pub enum Feature {\n    /// Reuse literal terminal decisions at native sampling boundaries.\n    HarnessMm,"),
-        ("pub const FEATURES: &[FeatureSpec] = &[", "pub const FEATURES: &[FeatureSpec] = &[\n    FeatureSpec {\n        id: Feature::HarnessMm,\n        key: \"harnessmm\",\n        stage: Stage::UnderDevelopment,\n        default_enabled: false,\n    },"),
+        ("pub const FEATURES: &[FeatureSpec] = &[", "pub const FEATURES: &[FeatureSpec] = &[\n    FeatureSpec {\n        id: Feature::HarnessMm,\n        key: \"harnessmm\",\n        stage: Stage::UnderDevelopment,\n        default_enabled: true,\n    },"),
     ],
     "codex-rs/core/src/tools/spec_plan.rs": [
         ("    if turn_context.config.update_plan_enabled {\n        registry.add(PlanHandler);\n    }",
@@ -87,4 +87,4 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", required=True)
     args = parser.parse_args()
-    print(f"HarnessMM: committed {patch(args.source_root)} source files; feature defaults off")
+    print(f"HarnessMM: committed {patch(args.source_root)} source files; feature defaults on")

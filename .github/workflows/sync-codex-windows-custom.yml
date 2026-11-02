@@ -34,6 +34,8 @@ on:
       - .github/workflows/sync-codex-windows-custom.yml
       - scripts/patch-codex-windows-custom.ps1
       - scripts/patch-codex-harnessmm.py
+      - scripts/Install-HarnessMmCue.ps1
+      - skills/harnessmm-cue/**
       - scripts/test-harnessmm-native.ps1
       - patches/harnessmm/**
       - scripts/patch-codex-no-daemon.py
