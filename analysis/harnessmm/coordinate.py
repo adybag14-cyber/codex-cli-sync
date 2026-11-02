@@ -95,16 +95,22 @@ class Coordinator:
         variant = package['variant']
         self.update('native_smoke', variant=variant)
         output = self.root / 'native-smoke' / package['workflow_head'] / variant
-        cases = ['success', 'disabled', 'failed', 'spoofed_stdout', 'rewrite', 'blocked', 'metering'] if included else ['baseline', 'metering']
+        cases = ['success', 'disabled', 'failed', 'spoofed_stdout', 'rewrite', 'blocked', 'post_blocked', 'changed_context', 'metering'] if included else ['baseline', 'metering']
         if (output / 'summary.json').exists():
             retained = json.loads((output / 'summary.json').read_text())
             if [row['case'] for row in retained] == cases and all(row['passed'] for row in retained):
                 return retained
             raise AssertionError('Retained smoke evidence is incomplete')
+        attempt = output
+        if output.exists():
+            serial = 2
+            while (output / f'attempt-{serial}').exists():
+                serial += 1
+            attempt = output / f'attempt-{serial}'
         results = []
         for case in cases:
             self.admission()
-            results.append(run_case(Path(package['binary']), output, case, included))
+            results.append(run_case(Path(package['binary']), attempt, case, included))
         atomic(output / 'summary.json', results)
         return results
 

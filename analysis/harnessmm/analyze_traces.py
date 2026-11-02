@@ -32,6 +32,15 @@ def analyze(root, arm):
     outputs = {}
     events = rows(folder / 'events.jsonl')
     cli_usage = [row.get('usage') for row in events if row.get('type') == 'turn.completed']
+    cli_totals = Counter()
+    for usage in cli_usage:
+        if isinstance(usage, dict):
+            cli_totals.update({key: value for key, value in usage.items() if isinstance(value, int)})
+    reconciles = bool(cli_usage) and all(totals[key] == value for key, value in cli_totals.items())
+    commands = [row['item'] for row in events if row.get('type') == 'item.completed'
+                and row.get('item', {}).get('type') == 'command_execution']
+    file_changes = [row['item'] for row in events if row.get('type') == 'item.completed'
+                    and row.get('item', {}).get('type') == 'file_change']
     for rollout in rollouts:
         for row in rows(rollout):
             payload = row.get('payload', {})
@@ -61,8 +70,11 @@ def analyze(root, arm):
         'model_request_attempts': len(pre), 'model_request_outcomes': len(post),
         'provider_statuses': dict(Counter(row.get('status', 'unknown') for row in post)),
         'requests_with_usage': len(usage_rows), 'requests_without_usage': len(post)-len(usage_rows),
-        'complete_usage_known': len(pre) == len(post) == len(usage_rows),
+        'complete_usage_known': len(pre) == len(post) == len(usage_rows) and reconciles,
+        'usage_reconciles_with_cli': reconciles,
         'provider_usage_sum': dict(totals), 'cli_turn_usage': cli_usage,
+        'native_terminal_invocations': len(commands), 'patch_batches': len(file_changes),
+        'native_terminal_exit_codes': dict(Counter(str(command.get('exit_code')) for command in commands)),
         'tool_calls': len(calls), 'tool_names': dict(Counter(call['name'] for call in calls)),
         'plan_authorship_calls': len(graph_calls), 'native_reused_actions': len(reused),
         'native_reused_actions_with_receipts': sum(call['call_id'] in outputs for call in reused),

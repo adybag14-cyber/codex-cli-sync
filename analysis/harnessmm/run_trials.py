@@ -94,7 +94,7 @@ def run_trial(root, arm, binary, auth_home, timeout):
         raise RuntimeError('File-based authentication is unavailable; no credential was read or exported.')
     hook = folder / 'request_hook.py'
     hook.write_text(HOOK, encoding='utf-8')
-    hook_command = f'& "{sys.executable}" "{hook}" "{folder / "model-requests.jsonl"}"'
+    hook_command = f'& "{sys.executable}" "{hook}" "{folder / "model-requests.jsonl"}"; exit $LASTEXITCODE'
     config = '''model = "gpt-6-astra"
 model_reasoning_effort = "max"
 model_context_window = 870000

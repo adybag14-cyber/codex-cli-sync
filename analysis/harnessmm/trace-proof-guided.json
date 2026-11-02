@@ -1,0 +1,36 @@
+{
+  "condition": "guided adoption",
+  "plan_time_utc": "2026-11-02T21:14:52.515Z",
+  "original_arguments_match_dispatched_arguments": true,
+  "intervening_model_requests": 0,
+  "steps": [
+    {
+      "index": 0,
+      "purpose": "daemon patch regressions",
+      "call_id": "harnessmm_6a280eec580f4f18bba95278fe2e1a81_0",
+      "dispatched_at_utc": "2026-11-02T21:14:53.007Z",
+      "receipt_at_utc": "2026-11-02T21:14:53.825Z"
+    },
+    {
+      "index": 1,
+      "purpose": "Guardian compatibility regressions",
+      "call_id": "harnessmm_6a280eec580f4f18bba95278fe2e1a81_1",
+      "dispatched_at_utc": "2026-11-02T21:14:53.960Z",
+      "receipt_at_utc": "2026-11-02T21:14:54.414Z"
+    },
+    {
+      "index": 2,
+      "purpose": "185 upstream compatibility checks",
+      "call_id": "harnessmm_6a280eec580f4f18bba95278fe2e1a81_2",
+      "dispatched_at_utc": "2026-11-02T21:14:54.559Z",
+      "receipt_at_utc": "2026-11-02T21:14:57.016Z"
+    },
+    {
+      "index": 3,
+      "purpose": "six complete-source transaction scenarios",
+      "call_id": "harnessmm_6a280eec580f4f18bba95278fe2e1a81_3",
+      "dispatched_at_utc": "2026-11-02T21:14:57.156Z",
+      "receipt_at_utc": "2026-11-02T21:15:03.052Z"
+    }
+  ]
+}

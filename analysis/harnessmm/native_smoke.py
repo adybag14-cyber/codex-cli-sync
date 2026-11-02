@@ -121,20 +121,25 @@ hooks = false
         config = config.replace('hooks = false', 'hooks = true')
         hook = folder / 'request_hook.py'
         hook.write_text(HOOK, encoding='utf-8')
-        hook_command = f'& "{sys.executable}" "{hook}" "{folder / "model-requests.jsonl"}"'
+        hook_command = f'& "{sys.executable}" "{hook}" "{folder / "model-requests.jsonl"}"; exit $LASTEXITCODE'
         for event in ['PreModelRequest', 'PostModelRequest']:
             config += f'\n[[hooks.{event}]]\n[[hooks.{event}.hooks]]\ntype = "command"\ncommand = {json.dumps(hook_command)}\n'
-    if case in ('rewrite', 'blocked'):
+    if case in ('rewrite', 'blocked', 'post_blocked', 'changed_context'):
         config = config.replace('hooks = false', 'hooks = true')
         hook = folder / 'hook.py'
-        if case == 'blocked':
+        event = 'PostToolUse' if case in ('post_blocked', 'changed_context') else 'PreToolUse'
+        if case in ('blocked', 'post_blocked'):
             hook.write_text('import sys\nprint("Blocked for fixture", file=sys.stderr)\nsys.exit(2)\n')
+        elif case == 'changed_context':
+            update = {'hookSpecificOutput': {'hookEventName': event,
+                      'additionalContext': 'Execution context changed: return to reasoning before further commands.'}}
+            hook.write_text('import json\nprint(json.dumps(' + repr(update) + '))\n')
         else:
             rewrite = {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
                        'updatedInput': {'command': 'python -c "print(123)"'}}}
             hook.write_text('import json\nprint(json.dumps(' + repr(rewrite) + '))\n')
-        hook_command = f'& "{sys.executable}" "{hook}"'
-        config += '\n[[hooks.PreToolUse]]\nmatcher = "Bash"\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = ' + json.dumps(hook_command) + '\n'
+        hook_command = f'& "{sys.executable}" "{hook}"; exit $LASTEXITCODE'
+        config += f'\n[[hooks.{event}]]\nmatcher = "Bash"\n[[hooks.{event}.hooks]]\ntype = "command"\ncommand = ' + json.dumps(hook_command) + '\n'
     # The runtime's environment owner discovers hooks.json reliably for exec.
     import tomllib
     parsed_config = tomllib.loads(config)
@@ -169,7 +174,7 @@ hooks = false
     output = (folder / 'stdout.jsonl').read_text(encoding='utf-8')
     if code != 0 or 'NATIVE_SMOKE_COMPLETE' not in output:
         raise AssertionError(f'{case}: CLI failed ({code}); inspect {folder}')
-    expected_second = case not in ('failed', 'spoofed_stdout', 'rewrite', 'blocked')
+    expected_second = case not in ('failed', 'spoofed_stdout', 'rewrite', 'blocked', 'post_blocked', 'changed_context')
     if (cwd / 'second.txt').exists() != expected_second:
         raise AssertionError(f'{case}: wrong successor execution; inspect {folder}')
     expected_requests = 2 if compiled else 3
@@ -194,7 +199,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--included', action='store_true')
     args = parser.parse_args()
-    cases = ['success', 'disabled', 'failed', 'spoofed_stdout', 'rewrite', 'blocked', 'metering'] if args.included else ['baseline', 'metering']
+    cases = ['success', 'disabled', 'failed', 'spoofed_stdout', 'rewrite', 'blocked', 'post_blocked', 'changed_context', 'metering'] if args.included else ['baseline', 'metering']
     results = []
     try:
         for case in cases:

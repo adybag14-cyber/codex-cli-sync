@@ -64,6 +64,16 @@ also costs tokens. A single pair is a case study, not statistical proof.
 
 ## Validation status
 
-Patch transaction/replay/refusal contracts pass locally against the pinned source.
-Native compilation, mock-provider integration, the two built artifacts and real
-agent trials are pending. The PR must be updated with their actual terminal results.
+Both Windows variants are built and verified. The candidate passes three native
+Rust policy tests, nine actual-CLI/mock-provider checks, and a live GPT-6 Astra
+reuse preflight. Two real-task pairs are complete. The unprompted candidate did
+not invoke HarnessMM; with a shared explicit cue, the candidate used one graph
+for four native commands, made 10 versus 17 model requests, and used 54.79% fewer
+reported tokens while both solutions passed the independent checks. This is one
+guided pair and includes trajectory differences, not a universal saving.
+
+See the [complete experiment report](harnessmm-experiment-20261102.md), including
+cached-token accounting, the unprompted result, withheld-quality findings,
+artifact/source bindings and trace evidence. Use the
+[tested cue](../analysis/harnessmm/guided-cue.txt) with the opt-in feature; the flag
+alone did not reliably produce uptake in the tested normal workflow.

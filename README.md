@@ -69,6 +69,13 @@ Release layout:
 
 Manual `workflow_dispatch` runs expose `force`, `upstream_ref`, `run_target`, and `dry_run` inputs. `run_target` can isolate either failing build, while `dry_run` suppresses release/state mutations but still builds and uploads artifacts. The default upstream ref is `main`; OpenAI Codex does not currently publish a `master` branch.
 
+Windows builds also include an opt-in native [HarnessMM execution feature](docs/harnessmm.md)
+for reusing literal terminal decisions at model-call boundaries. It defaults off.
+The separate A/B workflow can omit the overlay for a matched control and never
+publishes releases. The [real Actions-repair experiment](docs/harnessmm-experiment-20261102.md)
+records both an unprompted run with no uptake and a guided run with actual native
+substitutions; its measured savings should not be treated as a general guarantee.
+
 Release publishing is handled by [`scripts/publish-github-release.ps1`](scripts/publish-github-release.ps1) through the GitHub Releases API and the repo-scoped `GITHUB_TOKEN`.
 
 Windows artifact upload, both release publications, and the successful-state
