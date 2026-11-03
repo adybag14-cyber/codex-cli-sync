@@ -23,7 +23,8 @@ PUBLIC_EXPORTS = {
     "pubusebackend::BackendKind;",
 }
 STDERR_EXPORT = "pubusebackend::stderr_log::stderr_writer;"
-OPTIONAL_PUBLIC_EXPORTS = {"pubusebackend::windows::is_elevated;", STDERR_EXPORT}
+CLASSIFIED_START_EXPORT = "pubuselaunch::start_with_features_classified;"
+OPTIONAL_PUBLIC_EXPORTS = {"pubusebackend::windows::is_elevated;", STDERR_EXPORT, CLASSIFIED_START_EXPORT}
 
 
 def replace_once(text, before, after, description):
@@ -83,6 +84,18 @@ def patched_sources(sources):
         "codex-rs/app-server-daemon/src/launch.rs": {"start_with_features", "restart_with_features"},
         "codex-rs/app-server-daemon/src/prepare_install.rs": {"update_from_cli"},
     }
+    launch = "codex-rs/app-server-daemon/src/launch.rs"
+    if CLASSIFIED_START_EXPORT in normalized:
+        public_entries[launch].add("start_with_features_classified")
+        # Upstream routes the legacy API through a typed startup-error wrapper.
+        # Guard both public APIs before any daemon state can be touched.
+        before = ('pub async fn start_with_features(features: &BTreeMap<String, bool>) -> Result<LifecycleOutput> {\n'
+                  '    start_with_features_classified(features)\n'
+                  '        .await\n'
+                  '        .map_err(|err| err.error)\n}')
+        after = before.replace('    start_with_features_classified(features)',
+                               '    ensure_supported_platform()?;\n    start_with_features_classified(features)', 1)
+        result[launch] = replace_once(result[launch], before, after, "classified daemon start wrapper")
     if STDERR_EXPORT in normalized:
         public_entries[daemon].add("maintain_stderr_log")
         # The writer itself falls back to ordinary stderr. Only the managed-log
@@ -105,8 +118,8 @@ def patched_sources(sources):
     for name in ("run", "bootstrap", "ensure_remote_control_ready", "enable_remote_control_on_socket",
                  "start_remote_control_pairing", "set_remote_control", "run_pid_update_loop", "update"):
         check_entry_guard(result[daemon], name)
-    for name in ("start_with_features", "restart_with_features"):
-        check_entry_guard(sources["codex-rs/app-server-daemon/src/launch.rs"], name)
+    for name in public_entries[launch]:
+        check_entry_guard(result[launch], name)
     check_entry_guard(sources["codex-rs/app-server-daemon/src/prepare_install.rs"], "update_from_cli")
     before = '#[cfg(any(unix, windows))]\nfn ensure_supported_platform() -> Result<()> {\n    Ok(())\n}'
     after = (f'/// Whether this build supports a shared local daemon.\n{CONSTANT}\n\n'

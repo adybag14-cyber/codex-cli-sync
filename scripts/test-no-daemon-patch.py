@@ -58,9 +58,34 @@ def remote_guard_fixture():
     return values
 
 
+def classified_start_fixture():
+    values = remote_guard_fixture()
+    values[patcher.FILES[0]] += "\npub use launch::start_with_features_classified;\n"
+    values[patcher.FILES[1]] = '''pub async fn start_with_features(features: &BTreeMap<String, bool>) -> Result<LifecycleOutput> {
+    start_with_features_classified(features)
+        .await
+        .map_err(|err| err.error)
+}
+
+pub async fn start_with_features_classified(
+    features: &BTreeMap<String, bool>,
+) -> Result<LifecycleOutput, StartError> {
+    ensure_supported_platform()?;
+    let mut daemon = Daemon::from_environment()?;
+    original(daemon, features).await
+}
+
+pub async fn restart_with_features(features: &BTreeMap<String, bool>) -> Result<LifecycleOutput> {
+    ensure_supported_platform()?;
+    original(features).await
+}
+'''
+    return values
+
+
 class Contracts(unittest.TestCase):
     def test_reviewed_launch_layouts_preserve_remote_validation_and_replay(self):
-        for make_fixture in (fixture, remote_guard_fixture):
+        for make_fixture in (fixture, remote_guard_fixture, classified_start_fixture):
             for newline in ("\n", "\r\n"):
                 with self.subTest(layout=make_fixture.__name__, newline=newline), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
@@ -80,10 +105,45 @@ class Contracts(unittest.TestCase):
                     original_tail = values[patcher.FILES[3]].split('    if interactive.no_daemon', 1)[1]
                     self.assertIn('    if interactive.no_daemon' + original_tail.split(
                         '        Some(Subcommand::AppServer', 1)[0], cli)
+                    launch = first[patcher.FILES[1]].decode().replace("\r\n", "\n")
+                    patcher.check_entry_guard(launch, "start_with_features")
+                    if make_fixture is classified_start_fixture:
+                        patcher.check_entry_guard(launch, "start_with_features_classified")
+                        self.assertIn('        .map_err(|err| err.error)', launch)
                     patcher.patch(root)
                     self.assertEqual(first, {name: (root / name).read_bytes() for name in values})
                     if newline == "\r\n":
                         self.assertTrue(all(b"\n" not in value.replace(b"\r\n", b"") for value in first.values()))
+
+    def test_classified_start_drift_never_partially_writes(self):
+        for drift in ("missing-export", "duplicate-export", "missing-entry", "missing-guard",
+                      "early-side-effect", "wrapper-side-effect", "changed-wrapper"):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                values = classified_start_fixture()
+                daemon, launch = patcher.FILES[:2]
+                if drift == "missing-export":
+                    values[daemon] = values[daemon].replace("pub use launch::start_with_features_classified;", "")
+                elif drift == "duplicate-export":
+                    values[daemon] += "\npub use launch::start_with_features_classified;\n"
+                elif drift == "missing-entry":
+                    values[launch] = values[launch].replace("pub async fn start_with_features_classified(",
+                                                          "async fn start_with_features_classified(")
+                elif drift in ("missing-guard", "early-side-effect"):
+                    replacement = "" if drift == "missing-guard" else "    create_state();\n    ensure_supported_platform()?;\n"
+                    values[launch] = values[launch].replace("    ensure_supported_platform()?;\n", replacement, 1)
+                elif drift == "wrapper-side-effect":
+                    values[launch] = values[launch].replace("    start_with_features_classified(features)",
+                                                          "    create_state();\n    start_with_features_classified(features)", 1)
+                else:
+                    values[launch] = values[launch].replace(".map_err(|err| err.error)", ".map_err(convert_error)")
+                for name, text in values.items():
+                    (root / name).parent.mkdir(parents=True, exist_ok=True)
+                    (root / name).write_bytes(text.encode())
+                before = {name: (root / name).read_bytes() for name in values}
+                with self.assertRaises(ValueError):
+                    patcher.patch(root)
+                self.assertEqual(before, {name: (root / name).read_bytes() for name in values})
 
     def test_launch_drift_never_partially_writes(self):
         for make_fixture in (fixture, remote_guard_fixture):
