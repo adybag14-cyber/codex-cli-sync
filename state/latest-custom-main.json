@@ -1,32 +1,33 @@
 {
   "upstream_repo": "openai/codex",
   "upstream_ref": "main",
-  "upstream_sha": "adca20357620101686ebf633577d1d7e989e75b3",
-  "custom_version": "0.167.0-202611022232",
+  "upstream_sha": "d5830f6fc64ee594ed63a97d9ac968bba87033fa",
+  "custom_version": "0.167.0-202611032234",
   "version_resolution": {
-    "custom_version": "0.167.0-202611022232",
+    "custom_version": "0.167.0-202611032234",
     "base_version": "0.167.0",
     "source": "next_minor_after_latest_stable_tag",
     "latest_stable_tag": "rust-v0.166.0",
     "upstream_workspace_version": "0.0.0",
     "upstream_ref": "main",
-    "timestamp_utc": "2026-11-02T22:32:07.9574190Z"
+    "timestamp_utc": "2026-11-03T22:34:18.8740997Z"
   },
-  "build_recipe_sha256": "46cdfe4df74326ecf0256707cec478ea91e59cd124798f4e190e434654566b7c",
+  "build_recipe_sha256": "1f1bee72a1ae22598340946f811e3718921bb751b0dc0371f8c5942a053a1654",
   "windows_target": "x86_64-pc-windows-msvc",
-  "generated_at_utc": "2026-11-02T22:32:08.0391671Z",
-  "release_tag": "custom-windows-x64-adca20357620",
+  "generated_at_utc": "2026-11-03T22:34:18.9521687Z",
+  "release_tag": "custom-windows-x64-d5830f6fc64e",
   "rolling_tag": "latest-windows-x64-custom",
   "patch_status": "applied",
   "custom_patches_failed": false,
   "harnessmm": {
     "included": true,
-    "default_enabled": false,
-    "protocol": "literal-terminal-v1"
+    "default_enabled": true,
+    "protocol": "literal-terminal-v1",
+    "cue_skill": "codex-resources/skills/harnessmm-cue"
   },
   "artifact": {
-    "name": "codex-windows-x64-custom-adca20357620.zip",
-    "sha256": "eb78b771c753023ab70d962dba130b09149b55ebeffac0c51ae96f364bf8dbf3"
+    "name": "codex-windows-x64-custom-d5830f6fc64e.zip",
+    "sha256": "c042cdd9bf0b72628f5a10bd3f7aa6fdb6e3b8c8efeadd2591f7b4cfdbd025d6"
   },
   "patch_contract": {
     "local_daemon": "Disabled: embedded local TUI, no implicit attachment, lifecycle and updater rejected",
@@ -61,11 +62,11 @@
   },
   "release_files": [
     {
-      "name": "codex-windows-x64-custom-adca20357620.zip",
-      "sha256": "eb78b771c753023ab70d962dba130b09149b55ebeffac0c51ae96f364bf8dbf3"
+      "name": "codex-windows-x64-custom-d5830f6fc64e.zip",
+      "sha256": "c042cdd9bf0b72628f5a10bd3f7aa6fdb6e3b8c8efeadd2591f7b4cfdbd025d6"
     },
     {
-      "name": "codex-windows-x64-custom-adca20357620.manifest.json",
+      "name": "codex-windows-x64-custom-d5830f6fc64e.manifest.json",
       "sha256": null
     },
     {
