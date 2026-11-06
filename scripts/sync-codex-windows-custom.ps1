@@ -345,6 +345,8 @@ Set-PackageJsonVersionIfPresent -PackageJsonPath (Join-Path $sourceDir "codex-cl
 try {
     & (Join-Path $scriptRoot "patch-codex-windows-custom.ps1") -SourceRoot $sourceDir
     if (-not $WithoutHarnessMm) {
+        & python (Join-Path $scriptRoot 'test-harnessmm-patch.py') --source-root $sourceDir
+        if ($LASTEXITCODE -ne 0) { throw 'Exact-source HarnessMM patch contracts failed.' }
         & python (Join-Path $scriptRoot 'patch-codex-harnessmm.py') --source-root $sourceDir
         if ($LASTEXITCODE -ne 0) { throw 'Native HarnessMM patch failed.' }
     }
