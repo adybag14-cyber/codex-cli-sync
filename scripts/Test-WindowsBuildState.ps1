@@ -10,11 +10,13 @@ function Get-WindowsBuildRecipeFingerprint {
     if (Test-Path -LiteralPath $harnessSkill) {
         $inputs += @(Get-ChildItem -LiteralPath $harnessSkill -File -Recurse)
     }
-    $doctor = Join-Path $root 'tools/CodexSyncDoctor'
-    if (Test-Path -LiteralPath $doctor) {
-        $inputs += @(Get-ChildItem -LiteralPath $doctor -File -Recurse | Where-Object {
-            $_.Extension -in @('.cs', '.csproj', '.json') -and $_.FullName -notmatch '[\\/](?:bin|obj)[\\/]'
-        })
+    foreach ($toolName in @('CodexSyncDoctor', 'CodexDesktopBridge')) {
+        $toolRoot = Join-Path $root "tools/$toolName"
+        if (Test-Path -LiteralPath $toolRoot) {
+            $inputs += @(Get-ChildItem -LiteralPath $toolRoot -File -Recurse | Where-Object {
+                $_.Extension -in @('.cs', '.csproj', '.json') -and $_.FullName -notmatch '[\\/](?:bin|obj)[\\/]'
+            })
+        }
     }
     $inputs += Get-Item -LiteralPath (Join-Path $root '.github/workflows/sync-codex-windows-custom.yml')
     $records = @($inputs | Sort-Object FullName | ForEach-Object {

@@ -104,11 +104,18 @@ try {
         '.github/workflows/sync-codex-windows-custom.yml' = 'recipe'
         'tools/CodexSyncDoctor/Program.cs' = 'companion'
         'tools/CodexSyncDoctor/obj/generated.cs' = 'generated-ignored'
+        'tools/CodexDesktopBridge/Program.cs' = 'desktop bridge'
+        'tools/CodexDesktopBridge/obj/generated.cs' = 'generated-ignored'
     }
     $fingerprint = Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root
     if ($fingerprint -notmatch '^[0-9a-f]{64}$') { throw 'Invalid recipe fingerprint' }
     [IO.File]::WriteAllText((Join-Path $root 'tools/CodexSyncDoctor/obj/generated.cs'), 'different ignored output')
+    [IO.File]::WriteAllText((Join-Path $root 'tools/CodexDesktopBridge/obj/generated.cs'), 'different ignored output')
     if ((Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root) -ne $fingerprint) { throw 'Build output incorrectly affected recipe identity' }
+    $testCount++
+    [IO.File]::WriteAllText((Join-Path $root 'tools/CodexDesktopBridge/Program.cs'), 'updated desktop bridge')
+    if ((Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root) -eq $fingerprint) { throw 'Desktop bridge change did not invalidate build state' }
+    [IO.File]::WriteAllText((Join-Path $root 'tools/CodexDesktopBridge/Program.cs'), 'desktop bridge')
     $testCount++
     [IO.File]::WriteAllText((Join-Path $root 'scripts/patch.ps1'), 'new patch')
     if ((Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root) -eq $fingerprint) { throw 'Source patch change did not invalidate build state' }

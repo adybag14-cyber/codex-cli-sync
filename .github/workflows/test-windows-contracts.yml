@@ -5,12 +5,14 @@ on:
     paths:
       - 'scripts/**'
       - 'tools/CodexSyncDoctor/**'
+      - 'tools/CodexDesktopBridge/**'
       - '.github/workflows/*windows*.yml'
   push:
     branches: [main]
     paths:
       - 'scripts/**'
       - 'tools/CodexSyncDoctor/**'
+      - 'tools/CodexDesktopBridge/**'
       - '.github/workflows/*windows*.yml'
   workflow_dispatch:
   schedule:
@@ -133,6 +135,11 @@ jobs:
       - name: Exercise Real Windows CLI Runtime Fixture
         shell: pwsh
         run: ./scripts/test-windows-cli-runtime-fixture.ps1 -SourceRoot out/contract-upstream
+      - name: Build Desktop Transport Bridge
+        shell: pwsh
+        run: |
+          dotnet build tools/CodexDesktopBridge/CodexDesktopBridge.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop bridge build failed.' }
       - name: Check Out Current Package Contract Source
         uses: actions/checkout@v6
         with:

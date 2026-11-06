@@ -557,6 +557,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Packaged .NET companion self-test failed.' }
 & $doctorPath inspect-package $payloadRoot
 if ($LASTEXITCODE -ne 0) { throw 'Packaged .NET companion rejected the release layout.' }
 
+. (Join-Path $scriptRoot 'Publish-CodexDesktopBridge.ps1')
+$desktopBridge = Publish-CodexDesktopBridge -RepositoryRoot (Split-Path -Parent $scriptRoot) `
+    -PackageRoot $payloadRoot -WorkspaceDir $WorkspaceDir
+
 & python (Join-Path $scriptRoot 'test-windows-cli-runtime.py') `
     --package $payloadRoot --source-root $sourceDir --require-visible-debug --require-no-daemon `
     --output (Join-Path $payloadRoot 'runtime-checks.json')
@@ -586,6 +590,7 @@ $manifest = [ordered]@{
     patch_status       = "applied"
     custom_patches_failed = $false
     harnessmm          = [ordered]@{ included = (-not $WithoutHarnessMm); default_enabled = (-not $WithoutHarnessMm); protocol = 'literal-terminal-v1'; cue_skill = $(if ($WithoutHarnessMm) { $null } else { 'codex-resources/skills/harnessmm-cue' }) }
+    desktop_bridge     = $desktopBridge
     artifact           = [ordered]@{
         name   = [System.IO.Path]::GetFileName($bundlePath)
         sha256 = $bundleSha256

@@ -83,6 +83,15 @@ setting. The checkout's local Git attributes preserve this format without
 changing the upstream SQL. This prevents checksum mismatches when reopening a
 home created by those releases; no user database or migration record is rewritten.
 
+The optional [desktop browser bridge](docs/desktop-browser-bridge.md) lets
+`codex-desktop` connect to a custom app server started by the Windows desktop
+app. The desktop supplies the real browser permission service and retains its
+signature, account, and browser-policy checks. The adapter uses an authenticated
+loopback transport; it does not mint browser approvals. It is installed separately
+and leaves the ordinary `codex` command unchanged. A live CLI smoke test opened,
+inspected, and closed an Edge blank tab. In-app browser support additionally
+depends on associating the CLI task with a desktop window.
+
 Windows builds also include a native [HarnessMM execution feature](docs/harnessmm.md)
 for reusing literal terminal decisions at model-call boundaries. It defaults on;
 an explicit `features.harnessmm=false` override disables it. The repository-owned

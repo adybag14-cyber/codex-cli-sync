@@ -98,7 +98,7 @@ jobs:
           echo "timestamp=$BUILD_TIMESTAMP" >> "$GITHUB_OUTPUT"
           build_needed=true
           if [[ "$EVENT" == pull_request && "$ACTION" == synchronize && "$BEFORE" =~ ^[a-f0-9]{40}$ ]] && git cat-file -e "$BEFORE^{commit}"; then
-            if git diff --quiet "$BEFORE" HEAD -- patches scripts skills/harnessmm-cue tools/CodexSyncDoctor .github/workflows/harnessmm-ab.yml .github/workflows/sync-codex-windows-custom.yml; then
+            if git diff --quiet "$BEFORE" HEAD -- patches scripts skills/harnessmm-cue tools/CodexSyncDoctor tools/CodexDesktopBridge .github/workflows/harnessmm-ab.yml .github/workflows/sync-codex-windows-custom.yml; then
               build_needed=false
             fi
           fi
@@ -131,7 +131,7 @@ jobs:
         run: |
           git config --global core.longpaths true
           rustup target add x86_64-pc-windows-msvc
-          python -m pip install 'pywinpty>=2,<4'
+          python -m pip install 'pywinpty>=2,<4' 'websockets>=15,<16'
           python scripts/test-harnessmm-patch.py
           if ($LASTEXITCODE -ne 0) { throw 'HarnessMM patch contracts failed.' }
       - uses: actions/cache/restore@v4
