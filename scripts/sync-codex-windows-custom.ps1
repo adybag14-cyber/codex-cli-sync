@@ -6,6 +6,8 @@ param(
     [string]$StateDir = (Join-Path $PSScriptRoot "..\state"),
     [string]$WorkspaceDir = (Join-Path $PSScriptRoot "..\out"),
     [switch]$Force,
+    # Reuse native test artifacts for a fast, explicitly marked local package.
+    [switch]$FastLocal,
     # A/B builds use identical custom patches and omit only the HarnessMM overlay.
     [switch]$WithoutHarnessMm,
     [DateTimeOffset]$BuildTimestamp = [DateTimeOffset]::UtcNow
@@ -326,7 +328,7 @@ $customVersion = $versionResolution.custom_version
 Write-Host "Custom version $customVersion resolved from $($versionResolution.source); stable tag: $($versionResolution.latest_stable_tag)."
 Write-ActionOutput -Name "custom_version" -Value $customVersion
 $buildRecipeFingerprint = Get-WindowsBuildRecipeFingerprint -RepositoryRoot (Split-Path -Parent $scriptRoot)
-$recipeBytes = [Text.Encoding]::UTF8.GetBytes($buildRecipeFingerprint + '|harnessmm=' + (-not $WithoutHarnessMm))
+$recipeBytes = [Text.Encoding]::UTF8.GetBytes($buildRecipeFingerprint + '|harnessmm=' + (-not $WithoutHarnessMm) + '|fast_local=' + [bool]$FastLocal)
 $buildRecipeFingerprint = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($recipeBytes)).ToLowerInvariant()
 $previousState = $null
 if (Test-Path -LiteralPath $latestStatePath -PathType Leaf) {
@@ -443,7 +445,15 @@ try {
         if (Test-UpstreamExecServerPackage -SourceRoot $sourceDir) {
             $extraBinaries += @('--bin', 'codex-exec-server')
         }
-        cargo build --release --target $WindowsTarget --bin codex --bin codex-command-runner --bin codex-windows-sandbox-setup --bin codex-code-mode-host @extraBinaries
+        $buildProfileArguments = @('--release', '--target', $WindowsTarget)
+        if ($FastLocal) {
+            $nativeHost = (& rustc -vV | Select-String '^host: (.+)$').Matches.Groups[1].Value
+            if ($LASTEXITCODE -ne 0 -or $nativeHost -cne $WindowsTarget -or $env:CARGO_BUILD_TARGET -or $env:CARGO_TARGET_DIR) {
+                throw 'FastLocal requires the native Windows target and the default Cargo target directory.'
+            }
+            $buildProfileArguments = @('--profile', 'dev')
+        }
+        cargo build @buildProfileArguments --bin codex --bin codex-command-runner --bin codex-windows-sandbox-setup --bin codex-code-mode-host @extraBinaries
         if ($LASTEXITCODE -ne 0) {
             throw "cargo build failed with exit code $LASTEXITCODE"
         }
@@ -463,7 +473,7 @@ try {
     Pop-Location
 }
 
-$targetDir = Join-Path $sourceDir "codex-rs\target\$WindowsTarget\release"
+$targetDir = if ($FastLocal) { Join-Path $sourceDir 'codex-rs\target\debug' } else { Join-Path $sourceDir "codex-rs\target\$WindowsTarget\release" }
 $payloadRoot = Join-Path $releaseWorkspace $payloadName
 $binDir = Join-Path $payloadRoot "bin"
 
@@ -564,6 +574,7 @@ $manifest = [ordered]@{
     upstream_ref       = $UpstreamRef
     upstream_sha       = $upstreamSha
     custom_version     = $customVersion
+    build_profile      = $(if ($FastLocal) { 'dev' } else { 'release' })
     version_resolution = $versionResolution
     build_recipe_sha256 = $buildRecipeFingerprint
     windows_target     = $WindowsTarget

@@ -31,6 +31,27 @@ class CleanupContracts(unittest.TestCase):
         self.assertFalse(self.root.exists())
         self.assertEqual(sibling.read_text(), "keep")
 
+    def test_cleanup_adapts_both_python_callback_contracts(self):
+        original_rmtree = probe.shutil.rmtree
+        for version, keyword in [((3, 11), "onerror"), ((3, 12), "onexc")]:
+            with self.subTest(version=version):
+                self.root.mkdir(exist_ok=True)
+                self.file.write_text("owned fixture", encoding="utf-8")
+                retried = []
+                error = PermissionError(errno.EACCES, "readonly")
+
+                def fake_rmtree(root, **options):
+                    self.assertEqual(set(options), {keyword})
+                    argument = (PermissionError, error, None) if keyword == "onerror" else error
+                    options[keyword](lambda path: retried.append(path), str(self.file), argument)
+                    original_rmtree(root)
+
+                with mock.patch.object(probe.sys, "version_info", version), \
+                     mock.patch.object(probe.shutil, "rmtree", side_effect=fake_rmtree):
+                    probe.remove_fixture(self.root, self.parent_path)
+                self.assertEqual(retried, [str(self.file)])
+                self.assertFalse(self.root.exists())
+
     def test_cleanup_rejects_outside_parent_or_unowned_name(self):
         for parent, root in ((self.root, self.root), (self.parent_path.parent, self.parent_path)):
             with self.subTest(root=root), self.assertRaises(ValueError):

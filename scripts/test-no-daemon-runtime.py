@@ -11,6 +11,7 @@ import queue
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -226,7 +227,11 @@ def remove_fixture(root, expected_parent, timeout=10):
     deadline = time.monotonic() + timeout
     while root.exists():
         try:
-            shutil.rmtree(root, onexc=clear_readonly)
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(root, onexc=clear_readonly)
+            else:
+                # Python 3.11 passes exc_info, rather than the exception object.
+                shutil.rmtree(root, onerror=lambda function, path, info: clear_readonly(function, path, info[1]))
         except OSError as error:
             if error.errno not in (errno.EACCES, errno.EPERM, errno.EBUSY, errno.ENOTEMPTY) and \
                     getattr(error, "winerror", None) not in (5, 32, 33, 145):

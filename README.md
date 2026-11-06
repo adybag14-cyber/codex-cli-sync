@@ -70,6 +70,13 @@ Release layout:
 
 Manual `workflow_dispatch` runs expose `force`, `upstream_ref`, `run_target`, and `dry_run` inputs. `run_target` can isolate either failing build, while `dry_run` suppresses release/state mutations but still builds and uploads artifacts. The default upstream ref is `main`; OpenAI Codex does not currently publish a `master` branch.
 
+For a faster native Windows build on a developer machine, pass `-FastLocal` to
+`scripts/sync-codex-windows-custom.ps1`. This reuses the development-profile
+artifacts compiled by the required native tests. All test, package, and runtime
+checks still run. The manifest records `build_profile: dev`, and the build-state
+fingerprint separates it from release builds. The default and GitHub Actions
+continue to use the optimized release profile.
+
 Windows builds also include a native [HarnessMM execution feature](docs/harnessmm.md)
 for reusing literal terminal decisions at model-call boundaries. It defaults on;
 an explicit `features.harnessmm=false` override disables it. The repository-owned
