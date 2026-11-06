@@ -38,6 +38,8 @@ on:
       - skills/harnessmm-cue/**
       - scripts/test-harnessmm-native.ps1
       - scripts/test-harnessmm-patch.py
+      - scripts/normalize-windows-migrations.py
+      - scripts/test-windows-migration-format.py
       - patches/harnessmm/**
       - scripts/patch-codex-no-daemon.py
       - scripts/patch-guardian-section-content.py
@@ -140,6 +142,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Guardian compatibility contracts failed.' }
           python scripts/test-harnessmm-patch.py
           if ($LASTEXITCODE -ne 0) { throw 'HarnessMM sampling-result contracts failed.' }
+          python scripts/test-windows-migration-format.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows migration format contracts failed.' }
 
       - name: Restore Cargo Cache
         id: cargo-cache-restore

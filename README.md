@@ -77,6 +77,12 @@ checks still run. The manifest records `build_profile: dev`, and the build-state
 fingerprint separates it from release builds. The default and GitHub Actions
 continue to use the optimized release profile.
 
+Windows builds normalize SQLx migration files to CRLF, matching the bytes in
+previous Windows custom releases regardless of the local Git `core.autocrlf`
+setting. The checkout's local Git attributes preserve this format without
+changing the upstream SQL. This prevents checksum mismatches when reopening a
+home created by those releases; no user database or migration record is rewritten.
+
 Windows builds also include a native [HarnessMM execution feature](docs/harnessmm.md)
 for reusing literal terminal decisions at model-call boundaries. It defaults on;
 an explicit `features.harnessmm=false` override disables it. The repository-owned

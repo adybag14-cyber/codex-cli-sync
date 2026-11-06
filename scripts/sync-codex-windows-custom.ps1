@@ -345,6 +345,8 @@ Set-CargoWorkspaceVersion -CargoTomlPath (Join-Path $sourceDir "codex-rs\Cargo.t
 Set-PackageJsonVersionIfPresent -PackageJsonPath (Join-Path $sourceDir "codex-cli\package.json") -Version $customVersion
 
 try {
+    & python (Join-Path $scriptRoot 'normalize-windows-migrations.py') --source-root $sourceDir
+    if ($LASTEXITCODE -ne 0) { throw 'Windows migration checksum format verification failed.' }
     & (Join-Path $scriptRoot "patch-codex-windows-custom.ps1") -SourceRoot $sourceDir
     if (-not $WithoutHarnessMm) {
         & python (Join-Path $scriptRoot 'test-harnessmm-patch.py') --source-root $sourceDir
