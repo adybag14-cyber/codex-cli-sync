@@ -81,6 +81,10 @@ The separate A/B workflow can omit the overlay for a matched control and never
 publishes releases. The [real Actions-repair experiment](docs/harnessmm-experiment-20261102.md)
 records both an unprompted run with no uptake and a guided run with actual native
 substitutions; its measured savings should not be treated as a general guarantee.
+The HarnessMM patch validates the upstream sampling-result fields before writing.
+It supports both the original result and the mailbox-preemption result, setting
+`mailbox_preempted` to `false` for a reused terminal decision. Unknown layouts stop
+before changing source; regression tests type-check both supported initializers.
 
 Release publishing is handled by [`scripts/publish-github-release.ps1`](scripts/publish-github-release.ps1) through the GitHub Releases API and the repo-scoped `GITHUB_TOKEN`.
 

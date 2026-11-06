@@ -5,10 +5,13 @@ reject. The overlay is repository-owned, and replay preserves exact source bytes
 """
 import argparse
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = "codex-rs/core/src/harnessmm.rs"
 MARKER = "// codex-cli-sync: native HarnessMM sampling substitution."
+TURN_SOURCE = "codex-rs/core/src/session/turn.rs"
+LEGACY_RESULT = "SamplingRequestResult { needs_follow_up: true, last_agent_message: None }"
 EDITS = {
     "codex-rs/core/src/lib.rs": [
         ("mod function_tool;", "mod function_tool;\nmod harnessmm;"),
@@ -32,6 +35,26 @@ EDITS = {
 }
 
 
+def source_edits(relative, text):
+    """Match the result type before inserting a replay return for that layout."""
+    edits = EDITS[relative]
+    if relative != TURN_SOURCE:
+        return edits
+    definitions = re.findall(r"\bstruct\s+SamplingRequestResult\s*\{([^{}]*)\}", text)
+    if len(definitions) != 1:
+        raise ValueError("Expected one SamplingRequestResult definition")
+    body = re.sub(r"//[^\n]*", "", definitions[0])
+    fields = [re.sub(r"\s+", "", field) for field in body.split(",") if field.strip()]
+    legacy = {"needs_follow_up:bool", "last_agent_message:Option<String>"}
+    current = legacy | {"mailbox_preempted:bool"}
+    if len(fields) != len(set(fields)) or set(fields) not in (legacy, current):
+        raise ValueError("Unsupported SamplingRequestResult fields; review upstream before patching")
+    # A reused terminal decision did not receive or drain mailbox input.
+    result = LEGACY_RESULT if set(fields) == legacy else LEGACY_RESULT.replace(
+        "last_agent_message:", "mailbox_preempted: false, last_agent_message:")
+    return [(before, after.replace(LEGACY_RESULT, result)) for before, after in edits]
+
+
 def transform(text, before, after, path):
     if text.count(after) == 1 and before not in text.replace(after, ""):
         return text
@@ -50,7 +73,7 @@ def patch(source):
         originals[path] = raw
         newline = "\r\n" if b"\r\n" in raw else "\n"
         text = raw.decode().replace("\r\n", "\n")
-        for before, after in edits:
+        for before, after in source_edits(relative, text):
             text = transform(text, before, after, relative)
         changes[path] = text.replace("\n", newline).encode()
     overlay = (ROOT / "patches/harnessmm/harnessmm.rs").read_bytes()
