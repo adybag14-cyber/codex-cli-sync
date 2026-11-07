@@ -24,7 +24,9 @@ def main():
         assert root.parent == Path(tempfile.gettempdir()).resolve()
         binary = root / 'bin' / 'codex.exe'
         binary.parent.mkdir()
-        os.link(args.cli.resolve(), binary)
+        # Hosted Windows builds use D: while the disposable temp home is on C:.
+        # A copied fixture also works when the CLI is on another volume.
+        shutil.copy2(args.cli.resolve(), binary)
         home = root / 'home'
         home.mkdir()
         base = home / 'config.toml'
