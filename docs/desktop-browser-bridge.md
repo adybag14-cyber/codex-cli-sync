@@ -84,6 +84,19 @@ normal installed Browser/CUA tool and obey its permission responses. A missing
 desktop account/session association, unavailable service, or denied permission
 remains an error; the adapter does not grant it.
 
+For a resumed task, open that same task in the desktop before its first browser
+call. When the desktop connector is available, its
+`navigate_to_codex_page({threadId: <current task id>})` operation provides this
+association through the normal desktop path. This also establishes the window
+route needed by IAB. Opening a different test task does not associate the current
+CLI task.
+
+The browser service caches its permission decision for the current session/turn.
+If the first call was denied before the desktop association existed, opening the
+task does not reevaluate that cached decision within the same turn. A new normal
+user turn performs a fresh permission check. The desktop's Work browser settings
+and signed permission responses remain authoritative.
+
 ## Rollback and live verification
 
 Quit the desktop app and reopen its ordinary shortcut. The executable override
@@ -101,7 +114,15 @@ On 6 November 2026, the 13 transport checks passed against custom CLI
 - A separate persistent CLI turn replied `Hello - browser bridge verification is ready.`
 - An ephemeral CLI task had no IAB provider and returned
   `Browser is not available: iab`. IAB is tied to a desktop chat/window; the
-  transport adapter does not create that UI association or claim IAB success.
+  transport adapter does not create that UI association by itself.
+
+On 7 November 2026, the original task was resumed through `codex-desktop` and
+opened in the desktop with its official navigation connector. In the following
+normal user turn, the unchanged CUA tool enumerated Edge, IAB, and MCP Apps with
+no errors. It created and inspected `about:blank` tabs in both Edge and IAB, then
+closed both. Final inventory retained the user's 11 existing Edge tabs, with
+zero IAB tabs and no errors. This verifies both browsers from the actual resumed
+CLI session after the desktop association, rather than only a fresh test task.
 
 A direct MCP call made outside a turn was rejected with
 `Cannot verify browser access without the current turn`. This check is preserved.

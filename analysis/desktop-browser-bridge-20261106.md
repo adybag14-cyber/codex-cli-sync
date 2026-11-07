@@ -45,8 +45,37 @@ Live CLI CUA test, thread `01a1b2e1-9cc4-7c23-9847-c63ee733f138`:
 
 Persistent hello test, thread `01a1b2e5-5715-7f32-b28e-32d0422daebb`, completed
 successfully and replied `Hello - browser bridge verification is ready.`
-It is titled `CLI browser bridge verification` for the pending desktop-window
-association check.
+It is titled `CLI browser bridge verification` and was retained as a diagnostic
+task. A subsequent native `codex-desktop` TUI resume replied
+`Hello from the desktop bridge.` and exited with code 0.
+
+## Resumed-session verification on 7 November
+
+The original session `01a1ae32-0467-7b10-b87e-3f9efd2ce59b` resumed on the shared
+server with all three browser-host inputs present. Its first browser check was
+denied because its desktop association had not yet been established. The
+official desktop `navigate_to_codex_page` connector opened that same task.
+Desktop logs then recorded its session route, IAB backend readiness, and a
+successful `thread/resume` response.
+
+The installed browser service's `J3` function caches the promise for its signed
+permission check by session and turn, including a rejected promise. The denial
+therefore remained within that turn. No signature check, host response, or turn
+metadata was changed; the user sent a new normal `continue` turn.
+
+In that new turn, direct CUA calls from the resumed main agent observed:
+
+- Edge provider `3`, IAB provider `2`, MCP Apps provider `1`, and no errors.
+- Edge test tab `547289081`, URL/title `about:blank`, accessibility state
+  `AXWebArea about:blank`.
+- IAB test tab `1`, URL/title `about:blank`, accessibility state
+  `AXWebArea about:blank`; it was created with `visible: false`.
+- Both test tabs closed successfully. Final inventory: the original 11 Edge
+  tabs, zero IAB tabs, zero MCP App tabs, and no errors.
+- The CUA completion summary was sent after cleanup.
+
+This completes the IAB verification that was pending on 6 November. The required
+desktop association is now documented in the setup instructions.
 
 Raw local evidence is under `out/desktop-bridge-live/` and the transport report is
 `out/desktop-bridge-transport-test.json`; these generated artifacts are ignored
