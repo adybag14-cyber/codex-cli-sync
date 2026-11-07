@@ -106,16 +106,28 @@ try {
         'tools/CodexSyncDoctor/obj/generated.cs' = 'generated-ignored'
         'tools/CodexDesktopBridge/Program.cs' = 'desktop bridge'
         'tools/CodexDesktopBridge/obj/generated.cs' = 'generated-ignored'
+        'tools/CodexEdgeBrowser/package-lock.json' = 'pinned browser dependencies'
+        'tools/CodexEdgeBrowser/node_modules/generated.json' = 'installed-dependencies-ignored'
+        'docs/standalone-edge-cli.md' = 'packaged browser instructions'
     }
     $fingerprint = Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root
     if ($fingerprint -notmatch '^[0-9a-f]{64}$') { throw 'Invalid recipe fingerprint' }
     [IO.File]::WriteAllText((Join-Path $root 'tools/CodexSyncDoctor/obj/generated.cs'), 'different ignored output')
     [IO.File]::WriteAllText((Join-Path $root 'tools/CodexDesktopBridge/obj/generated.cs'), 'different ignored output')
+    [IO.File]::WriteAllText((Join-Path $root 'tools/CodexEdgeBrowser/node_modules/generated.json'), 'different ignored dependencies')
     if ((Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root) -ne $fingerprint) { throw 'Build output incorrectly affected recipe identity' }
     $testCount++
     [IO.File]::WriteAllText((Join-Path $root 'tools/CodexDesktopBridge/Program.cs'), 'updated desktop bridge')
     if ((Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root) -eq $fingerprint) { throw 'Desktop bridge change did not invalidate build state' }
     [IO.File]::WriteAllText((Join-Path $root 'tools/CodexDesktopBridge/Program.cs'), 'desktop bridge')
+    $testCount++
+    [IO.File]::WriteAllText((Join-Path $root 'tools/CodexEdgeBrowser/package-lock.json'), 'updated browser dependencies')
+    if ((Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root) -eq $fingerprint) { throw 'Browser dependency update did not invalidate build state' }
+    [IO.File]::WriteAllText((Join-Path $root 'tools/CodexEdgeBrowser/package-lock.json'), 'pinned browser dependencies')
+    $testCount++
+    [IO.File]::WriteAllText((Join-Path $root 'docs/standalone-edge-cli.md'), 'updated packaged instructions')
+    if ((Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root) -eq $fingerprint) { throw 'Packaged browser instructions did not invalidate build state' }
+    [IO.File]::WriteAllText((Join-Path $root 'docs/standalone-edge-cli.md'), 'packaged browser instructions')
     $testCount++
     [IO.File]::WriteAllText((Join-Path $root 'scripts/patch.ps1'), 'new patch')
     if ((Get-WindowsBuildRecipeFingerprint -RepositoryRoot $root) -eq $fingerprint) { throw 'Source patch change did not invalidate build state' }

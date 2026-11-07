@@ -68,6 +68,14 @@ on:
       - scripts/test-windows-cli-runtime-contracts.py
       - tools/CodexSyncDoctor/**
       - tools/CodexDesktopBridge/**
+      - tools/CodexEdgeBrowser/**
+      - scripts/Install-CodexEdge.ps1
+      - scripts/Start-CodexEdge.ps1
+      - scripts/Publish-CodexEdgeBrowser.ps1
+      - scripts/test-codex-edge-runtime.py
+      - scripts/test-codex-edge-install.py
+      - docs/desktop-browser-bridge.md
+      - docs/standalone-edge-cli.md
       - scripts/Publish-CodexDesktopBridge.ps1
       - scripts/Install-CodexDesktopBridge.ps1
       - scripts/Start-CodexDesktopWithBridge.ps1
@@ -123,6 +131,12 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+
+      - name: Prepare Standalone Edge Runtime Toolchain
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26.x'
+          package-manager-cache: false
 
       - name: Prepare Interactive Terminal Probe
         shell: pwsh

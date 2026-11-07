@@ -92,6 +92,14 @@ and leaves the ordinary `codex` command unchanged. A live CLI smoke test opened,
 inspected, and closed an Edge blank tab. In-app browser support additionally
 depends on associating the CLI task with a desktop window.
 
+For Edge without a desktop process, the separate
+[standalone Edge profile](docs/standalone-edge-cli.md) installs `codex-edge`.
+It runs the same custom CLI locally with a pinned Microsoft Playwright MCP
+runtime over private STDIO, using the installed Edge browser in a sandboxed,
+isolated automation context. The CLI keeps its existing login. Windows packages
+include the runtime and installer, and gate packaging on real Edge interaction
+and installer checks.
+
 Windows builds also include a native [HarnessMM execution feature](docs/harnessmm.md)
 for reusing literal terminal decisions at model-call boundaries. It defaults on;
 an explicit `features.harnessmm=false` override disables it. The repository-owned

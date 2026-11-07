@@ -98,7 +98,7 @@ jobs:
           echo "timestamp=$BUILD_TIMESTAMP" >> "$GITHUB_OUTPUT"
           build_needed=true
           if [[ "$EVENT" == pull_request && "$ACTION" == synchronize && "$BEFORE" =~ ^[a-f0-9]{40}$ ]] && git cat-file -e "$BEFORE^{commit}"; then
-            if git diff --quiet "$BEFORE" HEAD -- patches scripts skills/harnessmm-cue tools/CodexSyncDoctor tools/CodexDesktopBridge .github/workflows/harnessmm-ab.yml .github/workflows/sync-codex-windows-custom.yml; then
+            if git diff --quiet "$BEFORE" HEAD -- patches scripts skills/harnessmm-cue tools/CodexSyncDoctor tools/CodexDesktopBridge tools/CodexEdgeBrowser .github/workflows/harnessmm-ab.yml .github/workflows/sync-codex-windows-custom.yml; then
               build_needed=false
             fi
           fi
@@ -126,6 +126,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26.x'
+          package-manager-cache: false
       - name: Prepare tools and source contracts
         shell: pwsh
         run: |

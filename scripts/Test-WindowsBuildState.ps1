@@ -10,13 +10,17 @@ function Get-WindowsBuildRecipeFingerprint {
     if (Test-Path -LiteralPath $harnessSkill) {
         $inputs += @(Get-ChildItem -LiteralPath $harnessSkill -File -Recurse)
     }
-    foreach ($toolName in @('CodexSyncDoctor', 'CodexDesktopBridge')) {
+    foreach ($toolName in @('CodexSyncDoctor', 'CodexDesktopBridge', 'CodexEdgeBrowser')) {
         $toolRoot = Join-Path $root "tools/$toolName"
         if (Test-Path -LiteralPath $toolRoot) {
             $inputs += @(Get-ChildItem -LiteralPath $toolRoot -File -Recurse | Where-Object {
-                $_.Extension -in @('.cs', '.csproj', '.json') -and $_.FullName -notmatch '[\\/](?:bin|obj)[\\/]'
+                $_.Extension -in @('.cs', '.csproj', '.json', '.js', '.cjs') -and $_.FullName -notmatch '[\\/](?:bin|obj|node_modules)[\\/]'
             })
         }
+    }
+    foreach ($document in @('desktop-browser-bridge.md', 'standalone-edge-cli.md')) {
+        $documentPath = Join-Path $root "docs/$document"
+        if (Test-Path -LiteralPath $documentPath) { $inputs += Get-Item -LiteralPath $documentPath }
     }
     $inputs += Get-Item -LiteralPath (Join-Path $root '.github/workflows/sync-codex-windows-custom.yml')
     $records = @($inputs | Sort-Object FullName | ForEach-Object {

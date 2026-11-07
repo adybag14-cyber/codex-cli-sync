@@ -1,0 +1,8 @@
+{
+  "name": "codex-edge-browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop-independent Microsoft Edge MCP runtime for the custom Codex CLI",
+  "engines": { "node": ">=20" },
+  "dependencies": { "@playwright/mcp": "0.0.84" }
+}

@@ -6,6 +6,7 @@ on:
       - 'scripts/**'
       - 'tools/CodexSyncDoctor/**'
       - 'tools/CodexDesktopBridge/**'
+      - 'tools/CodexEdgeBrowser/**'
       - '.github/workflows/*windows*.yml'
   push:
     branches: [main]
@@ -13,6 +14,7 @@ on:
       - 'scripts/**'
       - 'tools/CodexSyncDoctor/**'
       - 'tools/CodexDesktopBridge/**'
+      - 'tools/CodexEdgeBrowser/**'
       - '.github/workflows/*windows*.yml'
   workflow_dispatch:
   schedule:
@@ -91,6 +93,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26.x'
+          package-manager-cache: false
       - name: Check PowerShell Compatibility Contracts
         shell: pwsh
         run: |
@@ -140,6 +146,13 @@ jobs:
         run: |
           dotnet build tools/CodexDesktopBridge/CodexDesktopBridge.csproj --configuration Release
           if ($LASTEXITCODE -ne 0) { throw 'Desktop bridge build failed.' }
+      - name: Test Standalone Edge Runtime
+        shell: pwsh
+        run: |
+          npm ci --prefix tools/CodexEdgeBrowser --omit=dev --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { throw 'Standalone Edge dependency installation failed.' }
+          python scripts/test-codex-edge-runtime.py --runtime tools/CodexEdgeBrowser --output out/edge-runtime-checks
+          if ($LASTEXITCODE -ne 0) { throw 'Standalone Edge runtime checks failed.' }
       - name: Check Out Current Package Contract Source
         uses: actions/checkout@v6
         with:
@@ -157,7 +170,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: windows-runtime-fixture-report
-          path: out/runtime-ci-fixture/runtime-checks.json
+          path: |
+            out/runtime-ci-fixture/runtime-checks.json
+            out/edge-runtime-checks/runtime-checks.json
+            out/edge-runtime-checks/edge-runtime-smoke.png
           if-no-files-found: warn
 
   guardian-rust:
