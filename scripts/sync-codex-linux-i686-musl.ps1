@@ -758,10 +758,35 @@ function Enable-I686MuslLinuxSandboxSyscallBuild {
         rules.insert(nr.into(), vec![]); // empty rule vec = unconditional match
     }
 '@
-    $text = $text.Replace("`r`n", "`n").Replace(
-        $legacyHelper.Replace("`r`n", "`n"),
-        $widenedHelper.Replace("`r`n", "`n")
-    )
+    $text = $text.Replace("`r`n", "`n")
+    $legacyHelper = $legacyHelper.Replace("`r`n", "`n")
+    $widenedHelper = $widenedHelper.Replace("`r`n", "`n")
+    # New upstream routes every insertion through add_syscall_rules so x32
+    # aliases receive the same restrictions. Widen at that boundary without
+    # replacing or bypassing the upstream helper's rule expansion.
+    $forwardingHelper = $legacyHelper.Replace('rules.insert(nr, vec![])', 'add_syscall_rules(rules, nr, vec![])')
+    $widenedForwardingHelper = $widenedHelper.Replace('rules.insert(nr.into(), vec![])', 'add_syscall_rules(rules, nr.into(), vec![])')
+    $forwardingHeader = @'
+    fn add_syscall_rules(
+        rules: &mut BTreeMap<i64, Vec<SeccompRule>>,
+        nr: i64,
+        syscall_rules: Vec<SeccompRule>,
+    ) {
+'@
+    if ([regex]::Matches($text, '\bfn deny_syscall(?:<T>)?\(').Count -ne 1) {
+        throw "Linux sandbox syscall helper has an unsupported layout in $syscallPath"
+    }
+    if ($text.Contains($forwardingHelper) -or $text.Contains($widenedForwardingHelper)) {
+        if ([regex]::Matches($text, '\bfn add_syscall_rules\b').Count -ne 1 -or
+            -not $text.Contains($forwardingHeader.Replace("`r`n", "`n"))) {
+            throw "Linux sandbox syscall forwarding helper has an unsupported layout in $syscallPath"
+        }
+        $text = $text.Replace($forwardingHelper, $widenedForwardingHelper)
+        $expectedHelper = $widenedForwardingHelper
+    } else {
+        $text = $text.Replace($legacyHelper, $widenedHelper)
+        $expectedHelper = $widenedHelper
+    }
 
     $acceptGuard = '            #[cfg(not(all(target_arch = "x86", target_env = "musl")))]'
     $acceptCall = '            deny_syscall(&mut rules, libc::SYS_accept);'
@@ -773,15 +798,14 @@ function Enable-I686MuslLinuxSandboxSyscallBuild {
         [regex]::Matches($text, [regex]::Escape($guardedAccept)).Count) {
         throw "Linux sandbox syscall SYS_accept guard has an unsupported layout in $syscallPath"
     }
-    if ($text -notmatch 'fn deny_syscall<T>\(rules: &mut BTreeMap<i64, Vec<SeccompRule>>, nr: T\)' -or
-        $text -notmatch 'T: Into<i64>' -or -not $text.Contains('rules.insert(nr.into(), vec![]);')) {
+    if (-not $text.Contains($expectedHelper)) {
         throw "Linux sandbox syscall helper has an unsupported layout in $syscallPath"
     }
 
     # Normalize the map key independently of the rule value. Upstream adds and
     # renames network modes (including AF_VSOCK restrictions), but every socket
     # syscall key must widen from libc's i32 to seccompiler's i64 on i686 musl.
-    $socketKey = '\brules\s*\.\s*insert\s*\(\s*libc::SYS_(?:socket|socketpair)\b'
+    $socketKey = '(?:\brules\s*\.\s*insert\s*\(\s*|\badd_syscall_rules\s*\(\s*&mut\s+rules\s*,\s*)libc::SYS_(?:socket|socketpair)\b'
     $socketKeyCount = [regex]::Matches($text, $socketKey).Count
     if ($socketKeyCount -eq 0) {
         throw "Linux sandbox socket syscall anchors not found in $syscallPath"

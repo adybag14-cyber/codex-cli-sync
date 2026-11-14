@@ -729,6 +729,87 @@ $($case.Signature)
         $testCount++
     }
 
+    $x32RuleHelper = @'
+    fn add_syscall_rules(
+        rules: &mut BTreeMap<i64, Vec<SeccompRule>>,
+        nr: i64,
+        syscall_rules: Vec<SeccompRule>,
+    ) {
+        #[cfg(target_arch = "x86_64")]
+        {
+            const X32_SYSCALL_BIT: i64 = 0x4000_0000;
+            rules.insert(nr | X32_SYSCALL_BIT, syscall_rules.clone());
+            let x32_nr = match nr {
+                libc::SYS_ptrace => Some(521),
+                libc::SYS_recvmmsg => Some(537),
+                _ => None,
+            };
+            if let Some(x32_nr) = x32_nr {
+                rules.insert(x32_nr | X32_SYSCALL_BIT, syscall_rules.clone());
+                rules.insert(x32_nr, syscall_rules.clone());
+            }
+        }
+        rules.insert(nr, syscall_rules);
+    }
+'@
+    $forwardingHelper = $syscallHelper.Replace('rules.insert(nr, vec![])', 'add_syscall_rules(rules, nr, vec![])')
+    $forwardingCalls = @'
+            deny_syscall(&mut rules, libc::SYS_accept);
+            add_syscall_rules(&mut rules, libc::SYS_socket, vec![unix_only_rule.clone()]);
+            add_syscall_rules(&mut rules, libc::SYS_socketpair, vec![unix_only_rule]);
+            add_syscall_rules(&mut rules, libc::SYS_socket, socket_rules);
+            add_syscall_rules(
+                &mut rules,
+                libc::SYS_socketpair,
+                vec![deny_non_unix_socketpair],
+            );
+            add_syscall_rules(&mut rules, libc::SYS_socket, vec![deny_vsock.clone()]);
+            add_syscall_rules(&mut rules, libc::SYS_socketpair.into(), vec![deny_vsock]);
+'@
+    foreach ($newline in @("`n", "`r`n")) {
+        $original = ($forwardingHelper + "`n" + $x32RuleHelper + "`n" + $forwardingCalls).Replace("`r`n", "`n").Replace("`n", $newline)
+        $root = New-Layout -Name ("sandbox-forwarded-x32-" + $testCount) -Files @{
+            'linux-sandbox/src/seccomp.rs' = $original
+        }
+        $path = Join-Path $root 'linux-sandbox/src/seccomp.rs'
+        Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root | Out-Null
+        $patched = [IO.File]::ReadAllText($path)
+        $expected = $original.Replace(
+            $forwardingHelper.Replace("`r`n", "`n").Replace("`n", $newline),
+            (@'
+    fn deny_syscall<T>(rules: &mut BTreeMap<i64, Vec<SeccompRule>>, nr: T)
+    where
+        T: Into<i64>,
+    {
+        add_syscall_rules(rules, nr.into(), vec![]); // empty rule vec = unconditional match
+    }
+'@).Replace("`r`n", "`n").Replace("`n", $newline)
+        ).Replace('libc::SYS_socket,', 'libc::SYS_socket.into(),').Replace('libc::SYS_socketpair,', 'libc::SYS_socketpair.into(),').Replace(
+            '            deny_syscall(&mut rules, libc::SYS_accept);',
+            '            #[cfg(not(all(target_arch = "x86", target_env = "musl")))]' + $newline + '            deny_syscall(&mut rules, libc::SYS_accept);'
+        )
+        if ($patched -cne $expected) { throw 'Forwarded syscall widening changed the x32 helper, rule payloads, or line endings.' }
+        if (Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root) { throw 'Forwarded syscall widening is not idempotent.' }
+        if ([IO.File]::ReadAllText($path) -cne $patched) { throw 'Forwarded syscall source changed bytes on reapplication.' }
+        $testCount++
+    }
+    foreach ($unsupported in @(
+        ($forwardingHelper + "`n" + $forwardingCalls),
+        ($forwardingHelper + "`n" + $x32RuleHelper.Replace('nr: i64,', 'nr: i32,') + "`n" + $forwardingCalls),
+        ($forwardingHelper + "`n" + $x32RuleHelper + "`n" + $x32RuleHelper + "`n" + $forwardingCalls),
+        ($syscallHelper + "`n" + $forwardingHelper + "`n" + $x32RuleHelper + "`n" + $forwardingCalls)
+    )) {
+        $root = New-Layout -Name ("sandbox-forwarded-refusal-" + $testCount) -Files @{
+            'linux-sandbox/src/seccomp.rs' = $unsupported
+        }
+        $path = Join-Path $root 'linux-sandbox/src/seccomp.rs'
+        $rejected = $false
+        try { Enable-I686MuslLinuxSandboxSyscallBuild -CodexRsDir $root | Out-Null }
+        catch { $rejected = $_.Exception.Message.StartsWith('Linux sandbox syscall') }
+        if (-not $rejected -or [IO.File]::ReadAllText($path) -cne $unsupported) { throw 'Unknown or ambiguous forwarding helpers were not rejected without mutation.' }
+        $testCount++
+    }
+
     if ($SourceRoot) {
         $files = @{}
         foreach ($relative in @('linux-sandbox/src/landlock.rs', 'linux-sandbox/src/seccomp.rs')) {
