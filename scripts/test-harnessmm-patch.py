@@ -14,6 +14,8 @@ SPEC.loader.exec_module(patcher)
 SOURCE = None
 LEGACY_FIELDS = "needs_follow_up: bool, last_agent_message: Option<String>,"
 CURRENT_FIELDS = "needs_follow_up: bool, mailbox_preempted: bool, last_agent_message: Option<String>,"
+MESSAGE_FIELDS = "needs_follow_up: bool, mailbox_preempted: bool, last_agent_message: AssistantMessages,"
+MESSAGE_DEFINITION = "struct AssistantMessages { final_answer: Option<String>, trailing_commentary: Option<String>, }"
 
 
 def populate(root, newline="\n"):
@@ -38,6 +40,24 @@ def snapshot(root):
 
 
 class HarnessMmPatchTests(unittest.TestCase):
+    def test_assistant_messages_initializes_empty_and_replays(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            populate(root)
+            path = root / patcher.TURN_SOURCE
+            text = re.sub(r"struct SamplingRequestResult\s*\{[^{}]*\}",
+                          "struct SamplingRequestResult { " + MESSAGE_FIELDS + " }", path.read_text())
+            if not re.search(r"\bstruct AssistantMessages\b", text):
+                text += MESSAGE_DEFINITION
+            path.write_text(text)
+            patcher.patch(root)
+            self.assertIn("mailbox_preempted: false", path.read_text())
+            self.assertIn("last_agent_message: AssistantMessages { final_answer: None, trailing_commentary: None }",
+                          path.read_text())
+            original = snapshot(root)
+            self.assertEqual(patcher.patch(root), 0)
+            self.assertEqual(snapshot(root), original)
+
     def test_mailbox_layout_initializes_false_and_replays(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -56,18 +76,38 @@ class HarnessMmPatchTests(unittest.TestCase):
             self.assertEqual(snapshot(root), original)
 
     @unittest.skipUnless(shutil.which("rustc"), "Rust compiler is unavailable")
-    def test_replay_result_typechecks_for_both_supported_layouts(self):
-        for fields in [LEGACY_FIELDS, CURRENT_FIELDS]:
+    def test_replay_result_typechecks_for_all_supported_layouts(self):
+        for fields in [LEGACY_FIELDS, CURRENT_FIELDS, MESSAGE_FIELDS]:
             with self.subTest(fields=fields), tempfile.TemporaryDirectory() as folder:
                 definition = "struct SamplingRequestResult { " + fields + " }"
+                if fields == MESSAGE_FIELDS:
+                    definition += "\n" + MESSAGE_DEFINITION
                 after = patcher.source_edits(patcher.TURN_SOURCE, definition)[0][1]
-                literal = re.search(r"SamplingRequestResult \{[^}]*\}", after).group()
+                literal = re.search(r"return Ok\(\((SamplingRequestResult .*?), Vec::new\(\)\)\)", after).group(1)
                 source = Path(folder) / "replay.rs"
                 source.write_text(definition + "\nfn replay() -> SamplingRequestResult { " + literal + " }\n")
                 result = subprocess.run(["rustc", "--crate-type", "lib", "--emit=metadata", "-o",
                                          str(Path(folder) / "replay.rmeta"), str(source)],
                                         capture_output=True, text=True, timeout=60)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unknown_assistant_messages_refuses_without_writing(self):
+        for definition in ["", MESSAGE_DEFINITION * 2,
+                           MESSAGE_DEFINITION.replace("final_answer: Option<String>", "final_answer: String"),
+                           MESSAGE_DEFINITION.replace(" }", " future: bool, }"),
+                           MESSAGE_DEFINITION.replace(" }", " final_answer: Option<String>, }")]:
+            with self.subTest(definition=definition), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                populate(root)
+                path = root / patcher.TURN_SOURCE
+                text = re.sub(r"struct SamplingRequestResult\s*\{[^{}]*\}",
+                              "struct SamplingRequestResult { " + MESSAGE_FIELDS + " }", path.read_text())
+                text = re.sub(r"struct AssistantMessages\s*\{[^{}]*\}", "", text) + definition
+                path.write_text(text)
+                original = snapshot(root)
+                with self.assertRaises(ValueError):
+                    patcher.patch(root)
+                self.assertEqual(snapshot(root), original)
 
     def test_unknown_result_shape_refuses_without_writing(self):
         for definition in ["struct SamplingRequestResult { needs_follow_up: bool, future: bool }",

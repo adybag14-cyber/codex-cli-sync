@@ -28,6 +28,49 @@ env:
   DOTNET_NOLOGO: '1'
 
 jobs:
+  harnessmm-source:
+    name: HarnessMM exact source (${{ matrix.ref }})
+    runs-on: windows-2025
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        ref:
+          - 57a808a3920f05f2d4b9eab2d0493e1df136ae6b
+          - b016cd18472588606c04af565528c4cd6746a41f
+          - main
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v6
+        with:
+          repository: openai/codex
+          ref: ${{ matrix.ref }}
+          path: out/harnessmm-upstream
+          persist-credentials: false
+      - name: Verify exact-source HarnessMM application and replay
+        shell: pwsh
+        run: |
+          git -C out/harnessmm-upstream rev-parse HEAD | Set-Content out/harnessmm-upstream-sha.txt
+          rustc --version
+          if ($LASTEXITCODE -ne 0) { throw 'Rust is required to type-check the replay initializers.' }
+          python scripts/test-harnessmm-patch.py --source-root out/harnessmm-upstream
+          if ($LASTEXITCODE -ne 0) { throw 'Exact-source HarnessMM contracts failed.' }
+          python scripts/patch-codex-harnessmm.py --source-root out/harnessmm-upstream
+          if ($LASTEXITCODE -ne 0) { throw 'HarnessMM application failed.' }
+          python scripts/test-harnessmm-patch.py --source-root out/harnessmm-upstream
+          if ($LASTEXITCODE -ne 0) { throw 'Patched-source HarnessMM replay failed.' }
+          git -C out/harnessmm-upstream diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'HarnessMM patch has whitespace errors.' }
+      - name: Retain exact HarnessMM upstream identity
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: harnessmm-source-${{ matrix.ref }}
+          path: out/harnessmm-upstream-sha.txt
+
   upstream-patch:
     name: Upstream patch (${{ matrix.ref }})
     runs-on: windows-2025

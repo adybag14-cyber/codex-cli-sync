@@ -112,9 +112,13 @@ publishes releases. The [real Actions-repair experiment](docs/harnessmm-experime
 records both an unprompted run with no uptake and a guided run with actual native
 substitutions; its measured savings should not be treated as a general guarantee.
 The HarnessMM patch validates the upstream sampling-result fields before writing.
-It supports both the original result and the mailbox-preemption result, setting
-`mailbox_preempted` to `false` for a reused terminal decision. Unknown layouts stop
-before changing source; regression tests type-check both supported initializers.
+It supports the original result, the mailbox-preemption result, and the
+`AssistantMessages` result that separates final answers from trailing commentary.
+Reused terminal decisions set `mailbox_preempted` to `false` and leave both message
+fields empty. Unknown result or message layouts stop before changing source;
+regression tests type-check all supported initializers. A dedicated CI matrix
+applies and replays the patch against historical source, the pinned upstream
+revision that exposed the message-layout failure, and current upstream `main`.
 
 Release publishing is handled by [`scripts/publish-github-release.ps1`](scripts/publish-github-release.ps1) through the GitHub Releases API and the repo-scoped `GITHUB_TOKEN`.
 

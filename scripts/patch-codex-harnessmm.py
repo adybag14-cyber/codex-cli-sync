@@ -35,23 +35,37 @@ EDITS = {
 }
 
 
+def struct_fields(text, name):
+    definitions = re.findall(r"\bstruct\s+" + re.escape(name) + r"\s*\{([^{}]*)\}", text)
+    if len(definitions) != 1:
+        raise ValueError(f"Expected one {name} definition")
+    body = re.sub(r"//[^\n]*", "", definitions[0])
+    fields = [re.sub(r"\s+", "", field) for field in body.split(",") if field.strip()]
+    if len(fields) != len(set(fields)):
+        raise ValueError(f"Duplicate {name} fields")
+    return set(fields)
+
+
 def source_edits(relative, text):
     """Match the result type before inserting a replay return for that layout."""
     edits = EDITS[relative]
     if relative != TURN_SOURCE:
         return edits
-    definitions = re.findall(r"\bstruct\s+SamplingRequestResult\s*\{([^{}]*)\}", text)
-    if len(definitions) != 1:
-        raise ValueError("Expected one SamplingRequestResult definition")
-    body = re.sub(r"//[^\n]*", "", definitions[0])
-    fields = [re.sub(r"\s+", "", field) for field in body.split(",") if field.strip()]
+    fields = struct_fields(text, "SamplingRequestResult")
     legacy = {"needs_follow_up:bool", "last_agent_message:Option<String>"}
     current = legacy | {"mailbox_preempted:bool"}
-    if len(fields) != len(set(fields)) or set(fields) not in (legacy, current):
+    messages = {"needs_follow_up:bool", "mailbox_preempted:bool", "last_agent_message:AssistantMessages"}
+    if fields not in (legacy, current, messages):
         raise ValueError("Unsupported SamplingRequestResult fields; review upstream before patching")
-    # A reused terminal decision did not receive or drain mailbox input.
-    result = LEGACY_RESULT if set(fields) == legacy else LEGACY_RESULT.replace(
+    # A reused terminal decision neither drains mail nor generates assistant text.
+    result = LEGACY_RESULT if fields == legacy else LEGACY_RESULT.replace(
         "last_agent_message:", "mailbox_preempted: false, last_agent_message:")
+    if fields == messages:
+        if struct_fields(text, "AssistantMessages") != {
+                "final_answer:Option<String>", "trailing_commentary:Option<String>"}:
+            raise ValueError("Unsupported AssistantMessages fields; review upstream before patching")
+        result = result.replace("last_agent_message: None", "last_agent_message: AssistantMessages { "
+                                "final_answer: None, trailing_commentary: None }")
     return [(before, after.replace(LEGACY_RESULT, result)) for before, after in edits]
 
 
