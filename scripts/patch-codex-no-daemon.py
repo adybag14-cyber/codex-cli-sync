@@ -110,6 +110,16 @@ def patched_sources(sources):
                                '    ensure_supported_platform()?;\n    backend::stderr_log::start(', 1)
         result[daemon] = replace_once(result[daemon], before, after, "managed stderr initializer")
         check_entry_guard(result[daemon], "maintain_stderr_log")
+    if re.search(r"^[ \t]*pub async fn ensure_updates_allowed\(", sources[daemon], re.M):
+        public_entries[daemon].add("ensure_updates_allowed")
+        # The TUI checks this policy before calling update(). Reject it before
+        # resolving daemon paths or loading managed requirements.
+        before = ('pub async fn ensure_updates_allowed() -> Result<()> {\n'
+                  '    update_policy::ensure_allowed(&Daemon::from_environment()?).await\n'
+                  '}')
+        after = before.replace('    update_policy::ensure_allowed(',
+                               '    ensure_supported_platform()?;\n    update_policy::ensure_allowed(', 1)
+        result[daemon] = replace_once(result[daemon], before, after, "daemon update policy check")
     for path, expected in public_entries.items():
         entries = re.findall(r"^[ \t]*pub (?:async )?fn ([a-z_]+)\(", sources[path], re.M)
         found = set(entries)

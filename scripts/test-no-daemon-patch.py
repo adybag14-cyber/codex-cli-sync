@@ -254,6 +254,21 @@ class Contracts(unittest.TestCase):
                     patcher.patch(root)
                 self.assertEqual(before, {name: (root / name).read_bytes() for name in values})
 
+    def test_daemon_update_policy_is_guarded_before_loading_requirements(self):
+        values = classified_start_fixture()
+        daemon = patcher.FILES[0]
+        signature = "pub async fn ensure_updates_allowed() -> Result<()> {\n"
+        body = "    update_policy::ensure_allowed(&Daemon::from_environment()?).await\n}\n"
+        values[daemon] += "\n" + signature + body
+
+        patched = patcher.patched_sources(values)
+        self.assertIn(signature + "    ensure_supported_platform()?;\n" + body, patched[daemon])
+        self.assertEqual(patched, patcher.patched_sources(patched))
+
+        values[daemon] = values[daemon].replace(signature, signature + "    create_state();\n")
+        with self.assertRaisesRegex(ValueError, "daemon update policy check"):
+            patcher.patched_sources(values)
+
     def test_lifecycle_side_effect_before_guard_is_rejected(self):
         values = fixture()
         values[patcher.FILES[0]] = values[patcher.FILES[0]].replace(
