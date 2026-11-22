@@ -161,7 +161,7 @@ pub(crate) fn observe(invocation: &ToolInvocation, output: &dyn ToolOutput) {
     let Some(pending) = inner.pending.as_mut() else {
         return;
     };
-    if pending.call_id != invocation.call_id {
+    if pending.call_id != invocation.call_id.as_str() {
         return;
     }
     // Rewritten input invalidates the graph, even if the rewritten command exits 0.
@@ -255,7 +255,7 @@ pub(crate) async fn try_reuse(
         .handle_tool_call(
             ToolCall {
                 tool_name: ToolName::plain("exec_command"),
-                call_id: call_id.clone(),
+                call_id: call_id.clone().into(),
                 payload: ToolPayload::Function { arguments },
                 encrypted_function_args: None,
                 native_call: Some(Arc::new(item)),
@@ -363,7 +363,7 @@ impl ToolExecutor<ToolInvocation> for HarnessMmHandler {
             };
             let plan = parse_plan(arguments)?;
             let history = invocation.session.clone_history().await;
-            if !matches!(history.raw_items().last(), Some(ResponseItem::FunctionCall { call_id, .. }) if call_id == &invocation.call_id)
+            if !matches!(history.raw_items().last(), Some(ResponseItem::FunctionCall { call_id, .. }) if call_id == invocation.call_id.as_str())
             {
                 return Err(FunctionCallError::RespondToModel(
                     "Call HarnessMM alone; intervening output invalidates the plan.".into(),
@@ -385,7 +385,7 @@ impl ToolExecutor<ToolInvocation> for HarnessMmHandler {
                 commands: plan.commands,
                 next: 0,
                 checkpoint: Checkpoint::Author {
-                    call_id: invocation.call_id,
+                    call_id: invocation.call_id.into(),
                     items_before_ack: history.raw_items().len(),
                     prefix: history_key(&history),
                 },
