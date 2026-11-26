@@ -349,10 +349,7 @@ impl ToolExecutor<ToolInvocation> for HarnessMmHandler {
         })
     }
 
-    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
-    where
-        ToolInvocation: 'a,
-    {
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
         Box::pin(async move {
             if invocation.turn.mode() == ModeKind::Plan
                 || !invocation.turn.config.features.enabled(Feature::HarnessMm)

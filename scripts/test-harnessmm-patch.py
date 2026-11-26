@@ -19,13 +19,17 @@ MESSAGE_DEFINITION = "struct AssistantMessages { final_answer: Option<String>, t
 
 
 def populate(root, newline="\n"):
+    executor = root / patcher.EXECUTOR_SOURCE
+    executor.parent.mkdir(parents=True, exist_ok=True)
+    executor.write_bytes((SOURCE / patcher.EXECUTOR_SOURCE).read_bytes() if SOURCE else patcher.LEGACY_HANDLE.encode())
+    patched_source = SOURCE is not None and (SOURCE / patcher.MODULE).exists()
+    if patched_source and (SOURCE / patcher.MODULE).read_bytes() != patcher.module_bytes(SOURCE):
+        raise ValueError('Source contains a different HarnessMM implementation')
     for relative, edits in patcher.EDITS.items():
         value = (SOURCE / relative).read_bytes().decode().replace("\r\n", "\n") if SOURCE else "\n".join(before for before, _ in edits) + "\n"
         if not SOURCE and relative == patcher.TURN_SOURCE:
             value += "struct SamplingRequestResult { " + LEGACY_FIELDS + " }\n"
-        if SOURCE and (SOURCE / patcher.MODULE).exists():
-            if (SOURCE / patcher.MODULE).read_bytes() != (patcher.ROOT / 'patches/harnessmm/harnessmm.rs').read_bytes():
-                raise ValueError('Source contains a different HarnessMM implementation')
+        if patched_source:
             for before, after in patcher.source_edits(relative, value):
                 if value.count(after) != 1:
                     raise ValueError('Source contains a partial HarnessMM implementation')
@@ -40,6 +44,38 @@ def snapshot(root):
 
 
 class HarnessMmPatchTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("rustc"), "Rust compiler is unavailable")
+    def test_handler_typechecks_for_both_executor_traits(self):
+        for method, generic in [(patcher.LEGACY_HANDLE, "Invocation"), (patcher.BORROWED_HANDLE, "Input: ToolInput")]:
+            with self.subTest(method=method), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                populate(root)
+                (root / patcher.EXECUTOR_SOURCE).write_text(method)
+                patcher.patch(root)
+                self.assertEqual(patcher.patch(root), 0)
+                module = (root / patcher.MODULE).read_text()
+                handler = re.search(r"    (fn handle\b[^{]+)\{", module).group(1)
+                source = root / "handler.rs"
+                source.write_text("mod codex_tools { pub type ToolExecutorFuture<'a> = &'a (); }\n"
+                                  "use codex_tools::ToolExecutorFuture;\n"
+                                  "struct ToolInvocation; trait ToolInput { type Call<'a>; }\n"
+                                  "impl ToolInput for ToolInvocation { type Call<'a> = Self; }\n"
+                                  f"trait ToolExecutor<{generic}> {{ {method} }}\n"
+                                  f"impl ToolExecutor<ToolInvocation> for () {{ {handler} {{ self }} }}")
+                result = subprocess.run(["rustc", "--crate-type", "lib", "--emit=metadata", "-o",
+                                         str(root / "handler.rmeta"), str(source)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unknown_executor_refuses_without_writing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            populate(root)
+            (root / patcher.EXECUTOR_SOURCE).write_text(patcher.BORROWED_HANDLE.replace("Input::Call", "Input::Other"))
+            before = snapshot(root)
+            with self.assertRaisesRegex(ValueError, "ToolExecutor::handle"):
+                patcher.patch(root)
+            self.assertEqual(snapshot(root), before)
+
     def test_assistant_messages_initializes_empty_and_replays(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

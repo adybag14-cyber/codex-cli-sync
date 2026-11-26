@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULE = "codex-rs/core/src/harnessmm.rs"
 MARKER = "// codex-cli-sync: native HarnessMM sampling substitution."
 TURN_SOURCE = "codex-rs/core/src/session/turn.rs"
+EXECUTOR_SOURCE = "codex-rs/tools/src/tool_executor.rs"
+LEGACY_HANDLE = "fn handle<'a>(&'a self, invocation: Invocation) -> ToolExecutorFuture<'a> where Invocation: 'a;"
+BORROWED_HANDLE = "fn handle<'a>(&'a self, invocation: Input::Call<'a>) -> ToolExecutorFuture<'a>;"
 LEGACY_RESULT = "SamplingRequestResult { needs_follow_up: true, last_agent_message: None }"
 EDITS = {
     "codex-rs/core/src/lib.rs": [
@@ -77,6 +80,25 @@ def transform(text, before, after, path):
     return text.replace(before, after, 1)
 
 
+def module_bytes(source):
+    # The legacy where-clause makes the lifetime early-bound. The borrowed
+    # ToolInput API uses a late-bound lifetime, even for owned ToolInvocation.
+    executor = " ".join((source / EXECUTOR_SOURCE).read_text(encoding="utf-8").split())
+    handles = re.findall(r"\bfn handle\b[^;{]*;", executor)
+    overlay = (ROOT / "patches/harnessmm/harnessmm.rs").read_bytes()
+    if handles == [BORROWED_HANDLE]:
+        return overlay
+    if handles != [LEGACY_HANDLE]:
+        raise ValueError("Unsupported ToolExecutor::handle signature")
+    current = b"fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {"
+    if overlay.count(current) != 1:
+        raise ValueError("Expected one HarnessMM handler signature")
+    newline = b"\r\n" if b"\r\n" in overlay else b"\n"
+    legacy = newline.join([b"fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>",
+                           b"    where", b"        ToolInvocation: 'a,", b"    {"])
+    return overlay.replace(current, legacy)
+
+
 def patch(source):
     source = Path(source).resolve()
     originals = {}
@@ -90,7 +112,7 @@ def patch(source):
         for before, after in source_edits(relative, text):
             text = transform(text, before, after, relative)
         changes[path] = text.replace("\n", newline).encode()
-    overlay = (ROOT / "patches/harnessmm/harnessmm.rs").read_bytes()
+    overlay = module_bytes(source)
     module = source / MODULE
     originals[module] = module.read_bytes() if module.exists() else None
     if originals[module] not in (None, overlay):
