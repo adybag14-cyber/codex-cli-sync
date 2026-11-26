@@ -423,7 +423,9 @@ try {
         if (-not $WithoutHarnessMm) {
             & (Join-Path $scriptRoot 'test-harnessmm-native.ps1') -ReportPath (Join-Path $WorkspaceDir 'harnessmm-test-selection.json')
         }
-        # Exercise actual dynamic tool calls and content responses against the upstream mock server.
+        # The app-server round-trip tests launch the host beside the debug app-server binary.
+        cargo build --locked -p codex-code-mode-host --bin codex-code-mode-host
+        if ($LASTEXITCODE -ne 0) { throw "Building the Code Mode host for app-server tests failed with exit code $LASTEXITCODE" }
         Invoke-CargoContractTest -Package codex-app-server -Filter 'suite::v2::dynamic_tools::' `
             -ReportPath (Join-Path $WorkspaceDir 'dynamic-tool-test-selection.json')
     } finally {
