@@ -150,6 +150,19 @@ fn admitted_receipt(receipt: &Value) -> bool {
         && receipt.get("session_id").is_none_or(Value::is_null)
 }
 
+// Older ToolOutput implementations return Value directly. Newer ones provide
+// CodeModeToolResult::into_json as an inherent method.
+#[allow(dead_code)]
+trait LegacyReceiptJson {
+    fn into_json(self) -> Value;
+}
+
+impl LegacyReceiptJson for Value {
+    fn into_json(self) -> Value {
+        self
+    }
+}
+
 /// Called only after the native registry accepts every PostToolUse hook.
 pub(crate) fn observe(invocation: &ToolInvocation, output: &dyn ToolOutput) {
     let Some(state) = invocation.turn.extension_data.get::<State>() else {
@@ -175,7 +188,7 @@ pub(crate) fn observe(invocation: &ToolInvocation, output: &dyn ToolOutput) {
         inner.pending = None;
         return;
     }
-    pending.receipt = Some(output.code_mode_result(&invocation.payload));
+    pending.receipt = Some(output.code_mode_result(&invocation.payload).into_json());
 }
 
 /// Substitute exactly one registered sampling boundary, then re-enter the normal
