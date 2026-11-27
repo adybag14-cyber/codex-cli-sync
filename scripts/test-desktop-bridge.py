@@ -29,8 +29,10 @@ async def check(bridge: Path, cli: Path):
         home = root / "home"
         home.mkdir()
         unicode_fixture = "Transport Ω 😀 line\\path\n" * 30_000
+        # A marketplace clone can outlive the transport and lock this temporary home on Windows.
         (home / "config.toml").write_text(
-            "developer_instructions = " + json.dumps(unicode_fixture, ensure_ascii=False) + "\n", encoding="utf-8")
+            "developer_instructions = " + json.dumps(unicode_fixture, ensure_ascii=False)
+            + "\n[features]\nplugins = false\n", encoding="utf-8")
         environment = dict(os.environ, CODEX_HOME=str(home), RUST_LOG="error", NO_COLOR="1")
         for key in list(environment):
             if key.startswith("BROWSER_USE_ACCESS_"):
