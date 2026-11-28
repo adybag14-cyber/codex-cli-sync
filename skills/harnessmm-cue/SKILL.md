@@ -21,7 +21,7 @@ agent merely because this skill was requested.
 
 ## Choose a useful sequence
 
-Use HarnessMM when 2–8 successive terminal commands are already fully decided
+Use HarnessMM when 2–16 successive terminal commands are already fully decided
 and the only condition for a later command is successful completion of its
 predecessor. Known validation commands after an edit are a good fit.
 

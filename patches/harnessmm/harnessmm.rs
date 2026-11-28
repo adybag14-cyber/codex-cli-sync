@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 const TOOL: &str = "harnessmm_plan";
-const MAX_NODES: usize = 8;
+const MAX_NODES: usize = 16;
 const MAX_BYTES: usize = 65536;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -58,9 +58,9 @@ fn parse_plan(raw: &str) -> Result<Plan, FunctionCallError> {
     let plan: Plan =
         serde_json::from_str(raw).map_err(|e| reject(&format!("Invalid HarnessMM plan: {e}")))?;
     if !(2..=MAX_NODES).contains(&plan.commands.len()) {
-        return Err(reject(
-            "HarnessMM requires 2 to 8 already-resolved commands.",
-        ));
+        return Err(reject(&format!(
+            "HarnessMM requires 2 to {MAX_NODES} already-resolved commands."
+        )));
     }
     if plan.commands.iter().any(|command| {
         command.cmd.trim().is_empty()
@@ -341,7 +341,7 @@ impl ToolExecutor<ToolInvocation> for HarnessMmHandler {
         );
         ToolSpec::Function(ResponsesApiTool {
             name: TOOL.into(),
-            description: "Register 2-8 exact sequential terminal commands you have already resolved. Use for predictable validation or execution sequences. The harness executes each through native exec_command without another model call; later commands require an observed exit code 0 and no running session. Failure, changed context, or user steering returns control to you with all actual results. Do not use when a later command requires interpreting earlier output, selecting paths, editing based on an error, or making a new decision. Arguments remain literal. Existing user constraints and permissions apply. Call this tool directly and alone, then let the harness continue. This tool does not finish the task or prove success.".into(),
+            description: format!("Register 2-{MAX_NODES} exact sequential terminal commands you have already resolved. Use for predictable validation or execution sequences. The harness executes each through native exec_command without another model call; later commands require an observed exit code 0 and no running session. Failure, changed context, or user steering returns control to you with all actual results. Do not use when a later command requires interpreting earlier output, selecting paths, editing based on an error, or making a new decision. Arguments remain literal. Existing user constraints and permissions apply. Call this tool directly and alone, then let the harness continue. This tool does not finish the task or prove success."),
             strict: false,
             defer_loading: None,
             parameters: JsonSchema::object(BTreeMap::from([("commands".into(), commands)]), Some(vec!["commands".into()]), Some(false.into())),
@@ -448,6 +448,12 @@ mod harnessmm_tests {
     }
 
     #[test]
+    fn accepts_sixteen_commands() {
+        let raw = json!({"commands": vec![json!({"cmd": "pwd"}); 16]}).to_string();
+        assert_eq!(parse_plan(&raw).unwrap().commands.len(), 16);
+    }
+
+    #[test]
     fn reject_unknown_authority_and_invalid_graphs() {
         for raw in [
             r#"{"commands":[]}"#,
@@ -460,7 +466,6 @@ mod harnessmm_tests {
         ] {
             assert!(parse_plan(raw).is_err(), "{raw}");
         }
-        assert!(parse_plan(&json!({"commands": vec![json!({"cmd":"x"});9]}).to_string()).is_err());
         assert!(parse_plan(&" ".repeat(MAX_BYTES + 1)).is_err());
     }
 }

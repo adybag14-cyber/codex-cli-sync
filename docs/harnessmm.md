@@ -2,7 +2,7 @@
 
 Predictable terminal transitions repeatedly resend context and invoke the model
 even when their exact commands are already known. The `harnessmm` feature
-lets the actor register 2–8 literal commands through `harnessmm_plan`. Codex
+lets the actor register 2–16 literal commands through `harnessmm_plan`. Codex
 executes one command at each ordinary sampling boundary, retaining the original
 provider, authentication, native tool dispatcher, hooks and cancellation path.
 The feature defaults on in custom Windows builds. An explicit
